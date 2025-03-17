@@ -1,0 +1,15 @@
+torch==2.4.1
+numpy
+einops
+tqdm
+argbind
+torchaudio
+soundfile
+click
+PyYAML
+accelerate
+torchmetrics
+munch
+librosa
+transformers
+descript-audio-codec
