@@ -2,4 +2,5 @@
 
 VCに耐えられる電子透かしを探求中です。
 
-https://github.com/Plachtaa/FAcodecを参照にしています。
+https://github.com/Plachtaa/FAcodec
+を参照にしています。
