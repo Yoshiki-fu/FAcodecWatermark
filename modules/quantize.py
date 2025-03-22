@@ -162,9 +162,9 @@ class FAquantizer(nn.Module):
                  codebook_size=1024,
                  codebook_dim=8,
                  quantizer_dropout=0.5,
-                 causal=False,
-                 separate_prosody_encoder=False,
-                 timbre_norm=False,):
+                 causal=False,      # True
+                 separate_prosody_encoder=False,        # True
+                 timbre_norm=False,):       # True
         super(FAquantizer, self).__init__()
         conv1d_type = SConv1d# if causal else nn.Conv1d
         self.prosody_quantizer = ResidualVectorQuantize(
