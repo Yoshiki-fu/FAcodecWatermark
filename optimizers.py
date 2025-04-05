@@ -105,4 +105,4 @@ def build_optimizer(model_dict, scheduler_params_dict, lr, type='AdamW'):
                        for key, opt in optim.items()])
 
     multi_optim = MultiOptimizer(optim, schedulers)
-    return multi_optims
+    return multi_optim
