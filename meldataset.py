@@ -79,7 +79,7 @@ class PseudoDataset(torch.utils.data.Dataset):
         # wave = wave / np.max(np.abs(wave))
         mel = preprocess(wave).squeeze(0)
         wave = torch.from_numpy(wave).float()
-        return wave, mel
+        return wave, mel        # wave shape is (sample_num), mel shape is (freq_bin, frame)
 
 
 def collate(batch):

@@ -67,12 +67,12 @@ def get_norm_module(module: nn.Module, causal: bool = False, norm: str = 'none',
     else:
         return nn.Identity()
 
-
+# カーネルサイズとstrideから長さを一定にするためのpaddingを算出してくれる
 def get_extra_padding_for_conv1d(x: torch.Tensor, kernel_size: int, stride: int,
                                  padding_total: int = 0) -> int:
     """See `pad_for_conv1d`.
     """
-    length = x.shape[-1]
+    length = x.shape[-1]        # 時間方向の長さ
     n_frames = (length - kernel_size + padding_total) / stride + 1
     ideal_length = (math.ceil(n_frames) - 1) * stride + (kernel_size - padding_total)
     return ideal_length - length
@@ -194,9 +194,9 @@ class SConv1d(nn.Module):
     and normalization.
     """
     def __init__(self, in_channels: int, out_channels: int,
-                 kernel_size: int, stride: int = 1, dilation: int = 1,
-                 groups: int = 1, bias: bool = True, causal: bool = False,
-                 norm: str = 'none', norm_kwargs: tp.Dict[str, tp.Any] = {},
+                 kernel_size: int, stride: int = 1, dilation: int = 1,      
+                 groups: int = 1, bias: bool = True, causal: bool = False,      
+                 norm: str = 'none', norm_kwargs: tp.Dict[str, tp.Any] = {},        
                  pad_mode: str = 'reflect', **kwargs):
         super().__init__()
         # warn user on unusual setup between dilation and stride
@@ -210,10 +210,11 @@ class SConv1d(nn.Module):
         self.pad_mode = pad_mode
 
     def forward(self, x):
-        B, C, T = x.shape
+        B, C, T = x.shape       # (バッチサイズ、チャネル数、切り出した波形のサンプル数(時間方向))
         kernel_size = self.conv.conv.kernel_size[0]
         stride = self.conv.conv.stride[0]
         dilation = self.conv.conv.dilation[0]
+        # 以下のkernel_sizeとpadding_total　はConv1dの出力長さを計算するために使う
         kernel_size = (kernel_size - 1) * dilation + 1  # effective kernel size with dilations
         padding_total = kernel_size - stride
         extra_padding = get_extra_padding_for_conv1d(x, kernel_size, stride, padding_total)

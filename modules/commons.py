@@ -289,11 +289,11 @@ def build_model(args, stage='codec'):
     # Discriminators
     from dac.model.discriminator import Discriminator
 
-    encoder = Encoder(d_model=args.DAC.encoder_dim,
-                      strides=args.DAC.encoder_rates,
+    encoder = Encoder(d_model=args.DAC.encoder_dim,   # 64
+                      strides=args.DAC.encoder_rates,   # [2,5,5,6]
                       d_latent=1024,
-                      causal=args.causal,
-                      lstm=args.lstm,)
+                      causal=args.causal,   # True
+                      lstm=args.lstm,)    # 2
 
     quantizer = FAquantizer(in_dim=1024,
                             n_p_codebooks=1,
@@ -339,7 +339,7 @@ def build_model(args, stage='codec'):
       bands=[(0.0, 0.1), (0.1, 0.25), (0.25, 0.5), (0.5, 0.75), (0.75, 1.0)],
     )
 
-    nets = Munch(
+    nets = Munch(     # dictみたいなやつ。ドットでアクセスできる。dictのような指定の仕方もできる。
       encoder=encoder,
       quantizer=quantizer,
       decoder=decoder,

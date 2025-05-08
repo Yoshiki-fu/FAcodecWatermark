@@ -168,22 +168,22 @@ class FAquantizer(nn.Module):
         super(FAquantizer, self).__init__()
         conv1d_type = SConv1d# if causal else nn.Conv1d
         self.prosody_quantizer = ResidualVectorQuantize(
-            input_dim=in_dim,
-            n_codebooks=n_p_codebooks,
-            codebook_size=codebook_size,
-            codebook_dim=codebook_dim,
-            quantizer_dropout=quantizer_dropout,
+            input_dim=in_dim,       # 1024
+            n_codebooks=n_p_codebooks,      # 1
+            codebook_size=codebook_size,        # 1024
+            codebook_dim=codebook_dim,      # 8
+            quantizer_dropout=quantizer_dropout,        # 0.5
         )
 
         self.content_quantizer = ResidualVectorQuantize(
-            input_dim=in_dim,
-            n_codebooks=n_c_codebooks,
-            codebook_size=codebook_size,
-            codebook_dim=codebook_dim,
-            quantizer_dropout=quantizer_dropout,
+            input_dim=in_dim,       # 1024
+            n_codebooks=n_c_codebooks,      # 2
+            codebook_size=codebook_size,    # 1024
+            codebook_dim=codebook_dim,      # 8
+            quantizer_dropout=quantizer_dropout,       # 0.5
         )
 
-        if not timbre_norm:
+        if not timbre_norm:     # TrueだからFalse
             self.timbre_quantizer = ResidualVectorQuantize(
                 input_dim=in_dim,
                 n_codebooks=n_t_codebooks,
@@ -191,7 +191,7 @@ class FAquantizer(nn.Module):
                 codebook_dim=codebook_dim,
                 quantizer_dropout=quantizer_dropout,
             )
-        else:
+        else:       # こっち
             self.timbre_encoder = StyleEncoder(in_dim=80, hidden_dim=512, out_dim=in_dim)
             self.timbre_linear = nn.Linear(1024, 1024 * 2)
             self.timbre_linear.bias.data[:1024] = 1

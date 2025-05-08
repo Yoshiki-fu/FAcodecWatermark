@@ -42,18 +42,18 @@ class ResidualUnit(nn.Module):
         return x + y
 
 
-class EncoderBlock(nn.Module):
+class EncoderBlock(nn.Module):      # 7層
     def __init__(self, dim: int = 16, stride: int = 1, causal: bool = False):
         super().__init__()
         conv1d_type = SConv1d# if causal else WNConv1d
         self.block = nn.Sequential(
-            ResidualUnit(dim // 2, dilation=1, causal=causal),
-            ResidualUnit(dim // 2, dilation=3, causal=causal),
-            ResidualUnit(dim // 2, dilation=9, causal=causal),
-            Snake1d(dim // 2),
+            ResidualUnit(dim // 2, dilation=1, causal=causal),      # 64, 128, 256, 512
+            ResidualUnit(dim // 2, dilation=3, causal=causal),      
+            ResidualUnit(dim // 2, dilation=9, causal=causal),     
+            Snake1d(dim // 2),      # 64
             conv1d_type(
-                dim // 2,
-                dim,
+                dim // 2,       # 64
+                dim,        # 128
                 kernel_size=2 * stride,
                 stride=stride,
                 padding=math.ceil(stride / 2),
@@ -66,39 +66,39 @@ class EncoderBlock(nn.Module):
         return self.block(x)
 
 
-class Encoder(nn.Module):
+class Encoder(nn.Module):       # 32層
     def __init__(
         self,
-        d_model: int = 64,
-        strides: list = [2, 4, 8, 8],
+        d_model: int = 64,      
+        strides: list = [2, 4, 8, 8],       # [2,5,5,6]
         d_latent: int = 64,
-        causal: bool = False,
+        causal: bool = False,       # True
         lstm: int = 2,
     ):
         super().__init__()
-        conv1d_type = SConv1d# if causal else WNConv1d
+        conv1d_type = SConv1d# if causal else WNConv1d      カーネルサイズstrideに合わせて自動で出力の長さを入力前と同じにしてくれるConv
         # Create first convolution
-        self.block = [conv1d_type(1, d_model, kernel_size=7, padding=3, causal=causal, norm='weight_norm')]
+        self.block = [conv1d_type(1, d_model, kernel_size=7, padding=3, causal=causal, norm='weight_norm')]     # 1層 
 
         # Create EncoderBlocks that double channels as they downsample by `stride`
-        for stride in strides:
-            d_model *= 2
+        for stride in strides:      # 4*7=28層
+            d_model *= 2        # 128, 256, 512, 1024
             self.block += [EncoderBlock(d_model, stride=stride, causal=causal)]
 
         # Add LSTM if needed
         self.use_lstm = lstm
-        if lstm:
-            self.block += [SLSTM(d_model, lstm)]
+        if lstm:        # True
+            self.block += [SLSTM(d_model, lstm)]        # 1024, 2層
 
         # Create last convolution
         self.block += [
             Snake1d(d_model),
-            conv1d_type(d_model, d_latent, kernel_size=3, padding=1, causal=causal, norm='weight_norm'),
+            conv1d_type(d_model, d_latent, kernel_size=3, padding=1, causal=causal, norm='weight_norm'),        # d_model=1024, d_latent=1024, 1層
         ]
 
         # Wrap black into nn.Sequential
         self.block = nn.Sequential(*self.block)
-        self.enc_dim = d_model
+        self.enc_dim = d_model      # 1024
 
     def forward(self, x):
         return self.block(x)

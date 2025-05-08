@@ -176,7 +176,7 @@ def main(args):
             train_start_time = time.time()
 
             batch = [b.to(device, non_blocking=True) for b in batch]
-            waves, mels, wave_lengths, mel_input_length = batch
+            waves, mels, wave_lengths, mel_input_length = batch         # waves shape is (batch_size, sample_num), mel shape is (batch_size, freq_bin, frame)
 
             # extract semantic latent with w2v model
             waves_16k = torchaudio.functional.resample(waves, 24000, 16000)
@@ -187,7 +187,7 @@ def main(args):
                 phone_ids = F.interpolate(predicted_ids.unsqueeze(0).float(), mels.size(-1), mode='nearest').long().squeeze(0)
 
             # get clips
-            mel_seg_len = min([int(mel_input_length.min().item()), max_frame_len])
+            mel_seg_len = min([int(mel_input_length.min().item()), max_frame_len])      # max_frame_len = 80
 
 
             gt_mel_seg = []
@@ -263,7 +263,7 @@ def main(args):
             wav_seg_input = wav_seg
             wav_seg_target = wav_seg
 
-            z = model.encoder(wav_seg_input)
+            z = model.encoder(wav_seg_input)        # 入力: 波形(batch_size, チャネル数1, 切り出した波形サンプル数(時間方向)), 出力: 潜在変数(batch_size, 1024, 時間方向)
             z, quantized, commitment_loss, codebook_loss, timbre = model.quantizer(z, wav_seg_input,
                                                                                    n_c=2,
                                                                                    full_waves=waves,
