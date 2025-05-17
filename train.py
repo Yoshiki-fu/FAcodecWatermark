@@ -219,7 +219,7 @@ def main(args):
             # normalize f0
             # Remove unvoiced frames (replace with -1)
             gt_glob_f0s = []
-            if not norm_f0:
+            if not norm_f0:     # not True -> False
                 f0_targets = F0_real
             else:
                 f0_targets = []

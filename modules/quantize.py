@@ -206,7 +206,7 @@ class FAquantizer(nn.Module):
             quantizer_dropout=quantizer_dropout,
         )
 
-        if separate_prosody_encoder:
+        if separate_prosody_encoder:    # True
             self.melspec_linear = conv1d_type(in_channels=20, out_channels=256, kernel_size=1, causal=causal)
             self.melspec_encoder = WN(hidden_channels=256, kernel_size=5, dilation_rate=1, n_layers=8, gin_channels=0, p_dropout=0.2, causal=causal)
             self.melspec_linear2 = conv1d_type(in_channels=256, out_channels=1024, kernel_size=1, causal=causal)
@@ -232,9 +232,9 @@ class FAquantizer(nn.Module):
         self.frame_rate = 24000 / 300
         self.hop_length = 300
 
-        self.is_timbre_norm = timbre_norm
+        self.is_timbre_norm = timbre_norm       # True
         if timbre_norm:
-            self.forward = self.forward_v2
+            self.forward = self.forward_v2      # モデルに入力した時にforward_v2を使うようにする
 
     def preprocess(self, wave_tensor, n_bins=20):
         mel_tensor = self.to_mel(wave_tensor.squeeze(1))
@@ -372,17 +372,18 @@ class FAquantizer(nn.Module):
         codebook_losses = codebook_loss_p + codebook_loss_c + codebook_loss_t + codebook_loss_r
 
         return outs, quantized, commitment_losses, codebook_losses
+    # forward_v2を使う
     def forward_v2(self, x, wave_segments, n_c=1, n_t=2, full_waves=None, wave_lens=None, return_codes=False):
         # timbre = self.timbre_encoder(x, sequence_mask(mel_lens, mels.size(-1)).unsqueeze(1))
         if full_waves is None:
             mel = self.preprocess(wave_segments, n_bins=80)
             timbre = self.timbre_encoder(mel, torch.ones(mel.size(0), 1, mel.size(2)).bool().to(mel.device))
-        else:
+        else:       # こっち
             mel = self.preprocess(full_waves, n_bins=80)
             timbre = self.timbre_encoder(mel, sequence_mask(wave_lens // self.hop_length, mel.size(-1)).unsqueeze(1))
         outs = 0
-        if self.separate_prosody_encoder:
-            prosody_feature = self.preprocess(wave_segments)
+        if self.separate_prosody_encoder:       # True
+            prosody_feature = self.preprocess(wave_segments)        # n_bin=20
 
             f0_input = prosody_feature  # (B, T, 20)
             f0_input = self.melspec_linear(f0_input)
