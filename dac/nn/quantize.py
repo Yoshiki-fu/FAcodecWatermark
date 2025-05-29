@@ -24,11 +24,11 @@ class VectorQuantize(nn.Module):
 
     def __init__(self, input_dim: int, codebook_size: int, codebook_dim: int):
         super().__init__()
-        self.codebook_size = codebook_size
-        self.codebook_dim = codebook_dim
+        self.codebook_size = codebook_size      # 1024
+        self.codebook_dim = codebook_dim        # 8
 
-        self.in_proj = WNConv1d(input_dim, codebook_dim, kernel_size=1)
-        self.out_proj = WNConv1d(codebook_dim, input_dim, kernel_size=1)
+        self.in_proj = WNConv1d(input_dim, codebook_dim, kernel_size=1)     # 1024->1024
+        self.out_proj = WNConv1d(codebook_dim, input_dim, kernel_size=1)        # 1024->1024
         self.codebook = nn.Embedding(codebook_size, codebook_dim)
 
     def forward(self, z):
@@ -58,12 +58,12 @@ class VectorQuantize(nn.Module):
         z_e = self.in_proj(z)  # z_e : (B x D x T)
         z_q, indices = self.decode_latents(z_e)
 
-        commitment_loss = F.mse_loss(z_e, z_q.detach(), reduction="none").mean([1, 2])
-        codebook_loss = F.mse_loss(z_q, z_e.detach(), reduction="none").mean([1, 2])
+        commitment_loss = F.mse_loss(z_e, z_q.detach(), reduction="none").mean([1, 2])      # エンコーダを更新するためのロス
+        codebook_loss = F.mse_loss(z_q, z_e.detach(), reduction="none").mean([1, 2])        # コードブックを更新するためのロス
 
         z_q = (
             z_e + (z_q - z_e).detach()
-        )  # noop in forward pass, straight-through gradient estimator in backward pass
+        )  # noop in forward pass, straight-through gradient estimator in backward pass     エンコーダへ勾配を流すためのトリック
 
         z_q = self.out_proj(z_q)
 
@@ -77,7 +77,7 @@ class VectorQuantize(nn.Module):
 
     def decode_latents(self, latents):
         encodings = rearrange(latents, "b d t -> (b t) d")
-        codebook = self.codebook.weight  # codebook: (N x D)
+        codebook = self.codebook.weight  # codebook: (N=1024 x D=8)
 
         # L2 normalize encodings and codebook (ViT-VQGAN)
         encodings = F.normalize(encodings)
@@ -102,7 +102,7 @@ class ResidualVectorQuantize(nn.Module):
 
     def __init__(
         self,
-        input_dim: int = 512,
+        input_dim: int = 512,       # 1024
         n_codebooks: int = 9,
         codebook_size: int = 1024,
         codebook_dim: Union[int, list] = 8,
@@ -117,10 +117,7 @@ class ResidualVectorQuantize(nn.Module):
         self.codebook_size = codebook_size
 
         self.quantizers = nn.ModuleList(
-            [
-                VectorQuantize(input_dim, codebook_size, codebook_dim[i])
-                for i in range(n_codebooks)
-            ]
+            [VectorQuantize(input_dim, codebook_size, codebook_dim[i]) for i in range(n_codebooks)]
         )
         self.quantizer_dropout = quantizer_dropout
 
@@ -163,6 +160,8 @@ class ResidualVectorQuantize(nn.Module):
 
         if n_quantizers is None:
             n_quantizers = self.n_codebooks
+
+        # ランダムな量子化数ドロップアウト
         if self.training:
             n_quantizers = torch.ones((z.shape[0],)) * self.n_codebooks + 1
             dropout = torch.randint(1, self.n_codebooks + 1, (z.shape[0],))
@@ -195,7 +194,7 @@ class ResidualVectorQuantize(nn.Module):
         codes = torch.stack(codebook_indices, dim=1)
         latents = torch.cat(latents, dim=1)
 
-        return z_q, codes, latents, commitment_loss, codebook_loss
+        return z_q, codes, latents, commitment_loss, codebook_loss      # Z_q: 量子化器の出力, codes:各量子化器の何番目のコードブックを使ったか, latents:エンコーダの出力, commitment_loss:エンコーダを更新するためのロス, codebook_loss:コードブックを更新するためのロス
 
     def from_codes(self, codes: torch.Tensor):
         """Given the quantized codes, reconstruct the continuous representation

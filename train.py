@@ -264,6 +264,8 @@ def main(args):
             wav_seg_target = wav_seg
 
             z = model.encoder(wav_seg_input)        # 入力: 波形(batch_size, チャネル数1, 切り出した波形サンプル数(時間方向)), 出力: 潜在変数(batch_size, 1024, 時間方向)
+
+            msg = np.random.choice([0,1], [batch_size, 1, 8])
             z, quantized, commitment_loss, codebook_loss, timbre = model.quantizer(z, wav_seg_input,
                                                                                    n_c=2,
                                                                                    full_waves=waves,
@@ -465,7 +467,7 @@ def main(args):
 
                     writer.add_audio('vc/ref_audio', waves[1], iters, sample_rate=sr)
                     writer.add_audio('vc/pred_audio', vc_pred_wave[0], iters, sample_rate=sr)
-            if iters % save_interval == 0 and accelerator.is_main_process:
+            """if iters % save_interval == 0 and accelerator.is_main_process:
                 print('Saving..')
                 state = {
                     'net': {key: model[key].state_dict() for key in model},
@@ -484,12 +486,12 @@ def main(args):
                     checkpoints.sort(key=lambda x: int(x.split('_')[-1].split('.')[0]))
                     # remove all except last 5
                     for cp in checkpoints[:-5]:
-                        os.remove(cp)
+                        os.remove(cp)"""
             iters = iters + 1
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config_path', type=str, default='configs/config.yml')
+    parser.add_argument('--config_path', type=str, default='./configs/config.yml')
     args = parser.parse_args()
     main(args)

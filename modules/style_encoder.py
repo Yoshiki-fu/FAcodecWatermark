@@ -31,7 +31,7 @@ class Conv1dGLU(nn.Module):
         return x
 
 class StyleEncoder(torch.nn.Module):
-    def __init__(self, in_dim=513, hidden_dim=128, out_dim=256):
+    def __init__(self, in_dim=513, hidden_dim=128, out_dim=256):        # 80, 512, 1024
 
         super().__init__()
 

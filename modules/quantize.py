@@ -164,12 +164,13 @@ class FAquantizer(nn.Module):
                  quantizer_dropout=0.5,
                  causal=False,      # True
                  separate_prosody_encoder=False,        # True
-                 timbre_norm=False,):       # True
+                 timbre_norm=False,     # True
+                 watermark=False):       
         super(FAquantizer, self).__init__()
         conv1d_type = SConv1d# if causal else nn.Conv1d
         self.prosody_quantizer = ResidualVectorQuantize(
             input_dim=in_dim,       # 1024
-            n_codebooks=n_p_codebooks,      # 1
+            n_codebooks=n_p_codebooks,      # 1     量子化器の個数
             codebook_size=codebook_size,        # 1024
             codebook_dim=codebook_dim,      # 8
             quantizer_dropout=quantizer_dropout,        # 0.5
@@ -198,12 +199,12 @@ class FAquantizer(nn.Module):
             self.timbre_linear.bias.data[1024:] = 0
             self.timbre_norm = nn.LayerNorm(1024, elementwise_affine=False)
 
-        self.residual_quantizer = ResidualVectorQuantize(
-            input_dim=in_dim,
-            n_codebooks=n_r_codebooks,
-            codebook_size=codebook_size,
-            codebook_dim=codebook_dim,
-            quantizer_dropout=quantizer_dropout,
+        self.residual_quantizer = ResidualVectorQuantize(       # Acoustic Detail
+            input_dim=in_dim,       # 1024
+            n_codebooks=n_r_codebooks,     # 3
+            codebook_size=codebook_size,        # 1024
+            codebook_dim=codebook_dim,      # 8
+            quantizer_dropout=quantizer_dropout,        # 0.5
         )
 
         if separate_prosody_encoder:    # True
@@ -234,12 +235,15 @@ class FAquantizer(nn.Module):
 
         self.is_timbre_norm = timbre_norm       # True
         if timbre_norm:
-            self.forward = self.forward_v2      # モデルに入力した時にforward_v2を使うようにする
+            self.forward = self.forward_v2      # FACodec用のforward
+        
+        if timbre_norm and watermark:
+            self.forward = self.forward_v3      # watermarking用のforward
 
     def preprocess(self, wave_tensor, n_bins=20):
         mel_tensor = self.to_mel(wave_tensor.squeeze(1))
         mel_tensor = (torch.log(1e-5 + mel_tensor) - self.mel_mean) / self.mel_std
-        return mel_tensor[:, :n_bins, :int(wave_tensor.size(-1) / self.hop_length)]
+        return mel_tensor[:, :n_bins, :int(wave_tensor.size(-1) / self.hop_length)]      # (B, n_bins, T)
 
     @torch.no_grad()
     def decode(self, codes):
@@ -300,6 +304,10 @@ class FAquantizer(nn.Module):
         )
 
         return [codes_c, codes_p, codes_t, codes_r], [z_c, z_p, z_t, z_r]
+
+    def fussion(self, x, msg):
+        return x
+
     def forward(self, x, wave_segments, noise_added_flags, recon_noisy_flags, n_c=2, n_t=2):
         # timbre = self.timbre_encoder(mels, sequence_mask(mel_lens, mels.size(-1)).unsqueeze(1))
         # timbre = self.timbre_encoder(mel_segments, torch.ones(mel_segments.size(0), 1, mel_segments.size(2)).bool().to(mel_segments.device))
@@ -373,23 +381,104 @@ class FAquantizer(nn.Module):
 
         return outs, quantized, commitment_losses, codebook_losses
     # forward_v2を使う
-    def forward_v2(self, x, wave_segments, n_c=1, n_t=2, full_waves=None, wave_lens=None, return_codes=False):
+    def forward_v2(self, x, wave_segments, n_c=1, n_t=2, full_waves=None, wave_lens=None, return_codes=False):      # n_c=2
         # timbre = self.timbre_encoder(x, sequence_mask(mel_lens, mels.size(-1)).unsqueeze(1))
         if full_waves is None:
-            mel = self.preprocess(wave_segments, n_bins=80)
-            timbre = self.timbre_encoder(mel, torch.ones(mel.size(0), 1, mel.size(2)).bool().to(mel.device))
-        else:       # こっち
-            mel = self.preprocess(full_waves, n_bins=80)
+            mel = self.preprocess(wave_segments, n_bins=80)     # (B, 80, T)
+            timbre = self.timbre_encoder(mel, torch.ones(mel.size(0), 1, mel.size(2)).bool().to(mel.device))       # 話者性の抽出  
+        else:       # 学習時こっち、推論時こっち
+            mel = self.preprocess(full_waves, n_bins=80)        # (B, 80, T)
             timbre = self.timbre_encoder(mel, sequence_mask(wave_lens // self.hop_length, mel.size(-1)).unsqueeze(1))
         outs = 0
-        if self.separate_prosody_encoder:       # True
+        if self.separate_prosody_encoder:       # 学習時True
             prosody_feature = self.preprocess(wave_segments)        # n_bin=20
 
-            f0_input = prosody_feature  # (B, T, 20)
-            f0_input = self.melspec_linear(f0_input)
+            f0_input = prosody_feature  # (B, 20, T)        メルスペクトログラムの低い周波数を使用
+            f0_input = self.melspec_linear(f0_input)        # (B, 256, T)
             f0_input = self.melspec_encoder(f0_input, torch.ones(f0_input.shape[0], 1, f0_input.shape[2]).to(
                 f0_input.device).bool())
-            f0_input = self.melspec_linear2(f0_input)
+            f0_input = self.melspec_linear2(f0_input)       # (B, 1024, T)
+
+            common_min_size = min(f0_input.size(2), x.size(2))
+            f0_input = f0_input[:, :, :common_min_size]
+
+            x = x[:, :, :common_min_size]
+
+            z_p, codes_p, latents_p, commitment_loss_p, codebook_loss_p = self.prosody_quantizer(
+                f0_input, 1
+            )
+            outs += z_p.detach()
+        else:
+            z_p, codes_p, latents_p, commitment_loss_p, codebook_loss_p = self.prosody_quantizer(
+                x, 1
+            )
+            outs += z_p.detach()
+
+        z_c, codes_c, latents_c, commitment_loss_c, codebook_loss_c = self.content_quantizer(
+            x, n_c
+        )
+        outs += z_c.detach()
+
+        residual_feature = x - z_p.detach() - z_c.detach()
+
+        z_r, codes_r, latents_r, commitment_loss_r, codebook_loss_r = self.residual_quantizer(
+            residual_feature, 3
+        )
+
+        bsz = z_r.shape[0]
+        res_mask = np.random.choice(
+            [0, 1],
+            size=bsz,
+            p=[
+                self.prob_random_mask_residual,
+                1 - self.prob_random_mask_residual,
+            ],
+        )
+        res_mask = (
+            torch.from_numpy(res_mask).unsqueeze(1).unsqueeze(1)
+        )  # (B, 1, 1)
+        res_mask = res_mask.to(
+            device=z_r.device, dtype=z_r.dtype
+        )
+
+        if not self.training:
+            res_mask = torch.ones_like(res_mask)
+        outs += z_r * res_mask
+
+        quantized = [z_p, z_c, z_r]
+        codes = [codes_p, codes_c, codes_r]
+        commitment_losses = commitment_loss_p + commitment_loss_c + commitment_loss_r
+        codebook_losses = codebook_loss_p + codebook_loss_c + codebook_loss_r
+
+        style = self.timbre_linear(timbre).unsqueeze(2)  # (B, 2d, 1)
+        gamma, beta = style.chunk(2, 1)  # (B, d, 1)
+        outs = outs.transpose(1, 2)
+        outs = self.timbre_norm(outs)
+        outs = outs.transpose(1, 2)
+        outs = outs * gamma + beta
+
+        if return_codes:
+            return outs, quantized, commitment_losses, codebook_losses, timbre, codes
+        else:
+            return outs, quantized, commitment_losses, codebook_losses, timbre
+
+    def forward_v3(self, x, wave_segments, n_c=1, n_t=2, full_waves=None, wave_lens=None, return_codes=False):
+        # timbre = self.timbre_encoder(x, sequence_mask(mel_lens, mels.size(-1)).unsqueeze(1))
+        if full_waves is None:
+            mel = self.preprocess(wave_segments, n_bins=80)     # (B, 80, T)
+            timbre = self.timbre_encoder(mel, torch.ones(mel.size(0), 1, mel.size(2)).bool().to(mel.device))       # 話者性の抽出  
+        else:       # 学習時こっち、推論時こっち
+            mel = self.preprocess(full_waves, n_bins=80)        # (B, 80, T)
+            timbre = self.timbre_encoder(mel, sequence_mask(wave_lens // self.hop_length, mel.size(-1)).unsqueeze(1))
+        outs = 0
+        if self.separate_prosody_encoder:       # 学習時True
+            prosody_feature = self.preprocess(wave_segments)        # n_bin=20
+
+            f0_input = prosody_feature  # (B, 20, T)        メルスペクトログラムの低い周波数を使用
+            f0_input = self.melspec_linear(f0_input)        # (B, 256, T)
+            f0_input = self.melspec_encoder(f0_input, torch.ones(f0_input.shape[0], 1, f0_input.shape[2]).to(
+                f0_input.device).bool())
+            f0_input = self.melspec_linear2(f0_input)       # (B, 1024, T)
 
             common_min_size = min(f0_input.size(2), x.size(2))
             f0_input = f0_input[:, :, :common_min_size]
@@ -459,20 +548,20 @@ class FApredictors(nn.Module):
                  in_dim=1024,
                  use_gr_content_f0=False,
                  use_gr_prosody_phone=False,
-                 use_gr_residual_f0=False,
-                 use_gr_residual_phone=False,
-                 use_gr_timbre_content=True,
-                 use_gr_timbre_prosody=True,
-                 use_gr_x_timbre=False,
+                 use_gr_residual_f0=False,      # True
+                 use_gr_residual_phone=False,       # True
+                 use_gr_timbre_content=True,        # True
+                 use_gr_timbre_prosody=True,        # False
+                 use_gr_x_timbre=False,     # True
                  norm_f0=True,
-                 timbre_norm=False,
-                 use_gr_content_global_f0=False,
+                 timbre_norm=False,     # True
+                 use_gr_content_global_f0=False,        # True
                  ):
         super(FApredictors, self).__init__()
-        self.f0_predictor = CNNLSTM(in_dim, 1, 2)
-        self.phone_predictor = CNNLSTM(in_dim, 1024, 1)
-        if timbre_norm:
-            self.timbre_predictor = nn.Linear(in_dim, 20000)
+        self.f0_predictor = CNNLSTM(in_dim, 1, 2)       # 1024
+        self.phone_predictor = CNNLSTM(in_dim, 1024, 1)     # 1024
+        if timbre_norm:     # True
+            self.timbre_predictor = nn.Linear(in_dim, 20000)        # 1024
         else:
             self.timbre_predictor = CNNLSTM(in_dim, 20000, 1, global_pred=True)
 
@@ -496,12 +585,12 @@ class FApredictors(nn.Module):
 
         self.norm_f0 = norm_f0
         self.timbre_norm = timbre_norm
-        if timbre_norm:
-            self.forward = self.forward_v2
-            self.global_f0_predictor = nn.Linear(in_dim, 1)
+        if timbre_norm:     # True
+            self.forward = self.forward_v2      # モデルに入力した時にforward_v2を使うようにする
+            self.global_f0_predictor = nn.Linear(in_dim, 1)     # 1024->1
 
         self.use_gr_content_global_f0 = use_gr_content_global_f0
-        if use_gr_content_global_f0:
+        if use_gr_content_global_f0:        # True
             self.rev_global_f0_predictor = nn.Sequential(
                 GradientReversal(alpha=1.0), CNNLSTM(in_dim, 1, 1, global_pred=True)
             )
@@ -563,25 +652,27 @@ class FApredictors(nn.Module):
         }
         return preds, rev_preds
     def forward_v2(self, quantized, timbre):
-        prosody_latent = quantized[0]
-        content_latent = quantized[1]
-        residual_latent = quantized[2]
-        content_pred = self.phone_predictor(content_latent)[0]
+        prosody_latent = quantized[0]       # prosodyの量子化器の出力   (B, dim=1024, T)
+        content_latent = quantized[1]       # contentの量子化器の出力    (B, dim=1024, T)
+        residual_latent = quantized[2]      # residualの量子化器の出力(たぶん論文だとAcoustic Detailに該当)     (B, dim=1024, T)
+                                            # timbreのshape (B, dim=1024)
+                                            
+        content_pred = self.phone_predictor(content_latent)[0]      # (B, dim, T)->(B, T, 1024)
 
-        spk_pred = self.timbre_predictor(timbre)
+        spk_pred = self.timbre_predictor(timbre)        # (B, 1024)->(B, 20000)
         f0_pred, uv_pred = self.f0_predictor(prosody_latent)
 
         prosody_rev_latent = torch.zeros_like(prosody_latent)
-        if self.use_gr_content_f0:
+        if self.use_gr_content_f0:      # False
             prosody_rev_latent += content_latent
-        if self.use_gr_residual_f0:
+        if self.use_gr_residual_f0:     # True
             prosody_rev_latent += residual_latent
         rev_f0_pred, rev_uv_pred = self.rev_f0_predictor(prosody_rev_latent)
 
         content_rev_latent = torch.zeros_like(content_latent)
-        if self.use_gr_prosody_phone:
+        if self.use_gr_prosody_phone:       # False
             content_rev_latent += prosody_latent
-        if self.use_gr_residual_phone:
+        if self.use_gr_residual_phone:      # True
             content_rev_latent += residual_latent
         rev_content_pred = self.rev_content_predictor(content_rev_latent)[0]
 

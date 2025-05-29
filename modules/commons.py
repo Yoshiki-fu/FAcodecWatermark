@@ -309,16 +309,16 @@ def build_model(args, stage='codec'):
                             )
 
     fa_predictors = FApredictors(in_dim=1024,
-                                 use_gr_content_f0=args.use_gr_content_f0,
-                                 use_gr_prosody_phone=args.use_gr_prosody_phone,
+                                 use_gr_content_f0=args.use_gr_content_f0,    # False
+                                 use_gr_prosody_phone=args.use_gr_prosody_phone,    # False
                                  use_gr_residual_f0=True,
                                  use_gr_residual_phone=True,
                                  use_gr_timbre_content=True,
-                                 use_gr_timbre_prosody=args.use_gr_timbre_prosody,
+                                 use_gr_timbre_prosody=args.use_gr_timbre_prosody,    # False
                                  use_gr_x_timbre=True,
-                                 norm_f0=args.norm_f0,
-                                 timbre_norm=args.timbre_norm,
-                                 use_gr_content_global_f0=args.use_gr_content_global_f0,
+                                 norm_f0=args.norm_f0,    # True
+                                 timbre_norm=args.timbre_norm,    # True
+                                 use_gr_content_global_f0=args.use_gr_content_global_f0,    # True
                                  )
 
 
@@ -437,6 +437,56 @@ def build_model(args, stage='codec'):
       encoder=encoder,
       quantizer=quantizer,
     )
+  elif stage == 'watermarking':
+    # Generators
+    from dac.model.dac import Encoder, Decoder
+    from modules.quantize import FAquantizer
+    # Discriminators
+    from dac.model.discriminator import Discriminator
+    encoder = Encoder(d_model=args.DAC.encoder_dim,   # 64
+                      strides=args.DAC.encoder_rates,   # [2,5,5,6]
+                      d_latent=1024,
+                      causal=args.causal,   # True
+                      lstm=args.lstm,)    # 2
+
+    quantizer = FAquantizer(in_dim=1024,
+                            n_p_codebooks=1,
+                            n_c_codebooks=args.n_c_codebooks,
+                            n_t_codebooks=2,
+                            n_r_codebooks=3,
+                            codebook_size=1024,
+                            codebook_dim=8,
+                            quantizer_dropout=0.5,
+                            causal=args.causal,
+                            separate_prosody_encoder=args.separate_prosody_encoder,
+                            timbre_norm=args.timbre_norm,
+                            watermark=True,
+                            )
+
+    decoder = Decoder(
+      input_channel=1024,
+      channels=args.DAC.decoder_dim,
+      rates=args.DAC.decoder_rates,
+      causal=args.causal,
+      lstm=args.lstm,
+    )
+
+    discriminator = Discriminator(
+      rates=[],
+      periods=[2, 3, 5, 7, 11],
+      fft_sizes=[2048, 1024, 512],
+      sample_rate=args.DAC.sr,
+      bands=[(0.0, 0.1), (0.1, 0.25), (0.25, 0.5), (0.5, 0.75), (0.75, 1.0)],
+    )
+
+    nets = Munch(     # dictみたいなやつ。ドットでアクセスできる。dictのような指定の仕方もできる。
+      encoder=encoder,
+      quantizer=quantizer,
+      decoder=decoder,
+      discriminator=discriminator,
+    )
+    
+
   else:
     raise ValueError(f"Unknown stage: {stage}")
 
