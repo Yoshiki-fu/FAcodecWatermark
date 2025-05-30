@@ -238,6 +238,7 @@ class FAquantizer(nn.Module):
             self.forward = self.forward_v2      # FACodec用のforward
         
         if timbre_norm and watermark:
+            self.watermark_emb = nn.Linear(2024, 1024)
             self.forward = self.forward_v3      # watermarking用のforward
 
     def preprocess(self, wave_tensor, n_bins=20):

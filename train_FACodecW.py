@@ -27,6 +27,7 @@ def load_model(args):
     ckpt_params = ckpt_params['net'] if 'net' in ckpt_params else ckpt_params  # adapt to format of self-trained checkpoints
     ckpt_params = {key: value for key, value in ckpt_params.items() if key in ['encoder','quantizer','decoder','discriminator']}        # fa_predictorを除く
 
+    new_layers = []
     for block_i, block_j in zip(new_model, ckpt_params):
         new_state_dict = new_model[block_i].state_dict()
         old_state_dict = ckpt_params[block_j]
@@ -34,19 +35,25 @@ def load_model(args):
         for layer in new_state_dict:
             if layer in old_state_dict and new_state_dict[layer].shape == old_state_dict[layer].shape:
                 new_state_dict[layer] = old_state_dict[layer]
+            elif layer not in old_state_dict:
+                #new_state_dict[layer].requires_grad = True
+                print(layer)
+                
+        
         new_model[block_i].load_state_dict(new_state_dict)
-        if block_i in ['encoder', 'quantizer']
-        for param in new_model[block_i].parameters():
-            param.requires_grad = False
+        if block_i in ['encoder', 'quantizer']:
+            for param in new_model[block_i].parameters():
+                param.requires_grad = False
     
+    print(new_model['quantizer'].watermark_emb)
+
+
     
+    # 学習したいレイヤーの勾配を計算するための準備
+
+    #print(ckpt_params['encoder']['block.0.conv.conv.bias'])
 
 
-
-    print(ckpt_params['encoder']['block.0.conv.conv.bias'])
-
-
-    # 共通するキーの重みだけをコピー
     
 
 
