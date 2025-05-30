@@ -7,7 +7,6 @@ __pycache__/
 *.so
 
 Models/
-facodec-checkpoints/pytorch_model.bin
 
 # Distribution / packaging
 .Python
