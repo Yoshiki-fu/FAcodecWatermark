@@ -67,7 +67,7 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--ckpt-path", type=str, default="/home/FAcodecWatermark/checkpoints/pytorch_model.bin")
+    parser.add_argument("--ckpt-path", type=str, default="/home/FAcodecWatermark/facodec-checkpoints/pytorch_model.bin")
     parser.add_argument("--config-path", type=str, default="/home/FAcodecWatermark/configs/config.yml")
     parser.add_argument("--source", type=str, required=True)
     args = parser.parse_args()

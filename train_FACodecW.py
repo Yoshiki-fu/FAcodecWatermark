@@ -12,6 +12,7 @@ import time
 
 import torchaudio
 import librosa
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
@@ -37,21 +38,25 @@ def load_model(args):
                 new_state_dict[layer] = old_state_dict[layer]
             elif layer not in old_state_dict:
                 #new_state_dict[layer].requires_grad = True
-                print(layer)
+                #print(layer)
                 
-        
+    
         new_model[block_i].load_state_dict(new_state_dict)
+        # 事前学習した重みを凍結
         if block_i in ['encoder', 'quantizer']:
             for param in new_model[block_i].parameters():
                 param.requires_grad = False
     
-    print(new_model['quantizer'].watermark_emb)
-
-
+    # 学習したい重み
+    for param in new_model['quantizer'].watermark_emb.parameters():
+        param.requires_grad = True  # watermark_embのパラメータは学習可能にする
     
-    # 学習したいレイヤーの勾配を計算するための準備
+    _ = [new_model[key].train() for key in new_model]
+    _ = [new_model[key].to(device) for key in new_model]
 
-    #print(ckpt_params['encoder']['block.0.conv.conv.bias'])
+    return new_model
+    
+
 
 
     
