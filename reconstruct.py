@@ -67,8 +67,8 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--ckpt-path", type=str, default="/home/FAcodecWatermark/facodec-checkpoints/pytorch_model.bin")
+    parser.add_argument("--ckpt-path", type=str, default="/home/facodec-checkpoints/pytorch_model.bin")
     parser.add_argument("--config-path", type=str, default="/home/FAcodecWatermark/configs/config.yml")
-    parser.add_argument("--source", type=str, required=True)
+    parser.add_argument("--source", type=str, default="/workspace/DS_10283_3443/wav48_data/p299/p299_001_mic1.wav")
     args = parser.parse_args()
     main(args)

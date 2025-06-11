@@ -15,6 +15,9 @@ from dac.nn.layers import WNConvTranspose1d
 from dac.nn.quantize import ResidualVectorQuantize
 from .encodec import SConv1d, SConvTranspose1d, SLSTM
 
+from modules.watermarking import FCBlock
+import watermark_hparams as hp
+
 
 def init_weights(m):
     if isinstance(m, nn.Conv1d):
@@ -74,6 +77,7 @@ class Encoder(nn.Module):       # 32層
         d_latent: int = 64,
         causal: bool = False,       # True
         lstm: int = 2,
+        extracter: bool = False
     ):
         super().__init__()
         conv1d_type = SConv1d# if causal else WNConv1d      カーネルサイズstrideに合わせて自動で出力の長さを入力前と同じにしてくれるConv
@@ -100,8 +104,23 @@ class Encoder(nn.Module):       # 32層
         self.block = nn.Sequential(*self.block)
         self.enc_dim = d_model      # 1024
 
+        if extracter:
+            self.separate_msg = FCBlock(1024, 2048)
+            self.msg_linear = FCBlock(2048, 1024)
+            self.msg_linear_out = FCBlock(1024, hp.msg_len)
+            self.forward = self.forward_v2
+            
+
     def forward(self, x):
         return self.block(x)
+    
+    def forward_v2(self, x):
+        x = self.block(x).transpose(1,2)
+        x = self.separate_msg(x)
+        x = self.msg_linear(x)
+        x = torch.mean(x, dim=1, keepdim=True)
+        msg_logits = self.msg_linear_out(x)
+        return msg_logits
 
 
 class DecoderBlock(nn.Module):

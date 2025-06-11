@@ -485,7 +485,18 @@ def build_model(args, stage='codec'):
       decoder=decoder,
       discriminator=discriminator,
     )
-    
+
+  elif stage == 'extracter':
+    from dac.model.dac import Encoder
+    encoder = Encoder(d_model=args.DAC.encoder_dim,   # 64
+                  strides=args.DAC.encoder_rates,   # [2,5,5,6]
+                  d_latent=1024,
+                  causal=args.causal,   # True
+                  lstm=args.lstm,
+                  extracter=True)    # 2
+    nets = Munch(
+      encoder=encoder
+    )
 
   else:
     raise ValueError(f"Unknown stage: {stage}")

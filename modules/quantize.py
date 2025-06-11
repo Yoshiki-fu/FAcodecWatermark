@@ -1,5 +1,6 @@
 from dac.nn.quantize import ResidualVectorQuantize
 from torch import nn
+from torch.nn import LeakyReLU
 from modules.wavenet import WN
 from modules.style_encoder import StyleEncoder
 from gradient_reversal import GradientReversal
@@ -12,6 +13,8 @@ from torch.nn.utils import weight_norm
 from torch import nn, sin, pow
 from einops.layers.torch import Rearrange
 from dac.model.encodec import SConv1d
+from modules.watermarking import FCBlock
+import watermark_hparams as hp
 
 def init_weights(m):
     if isinstance(m, nn.Conv1d):
@@ -238,7 +241,8 @@ class FAquantizer(nn.Module):
             self.forward = self.forward_v2      # FACodec用のforward
         
         if timbre_norm and watermark:
-            self.watermark_emb = nn.Linear(2024, 1024)
+            self.msg_linear = FCBlock(hp.msg_len, 1024, activation=LeakyReLU(inplace=True))
+            self.watermark_emb = FCBlock(2024, 1024)
             self.forward = self.forward_v3      # watermarking用のforward
 
     def preprocess(self, wave_tensor, n_bins=20):
@@ -463,7 +467,7 @@ class FAquantizer(nn.Module):
         else:
             return outs, quantized, commitment_losses, codebook_losses, timbre
 
-    def forward_v3(self, x, wave_segments, n_c=1, n_t=2, full_waves=None, wave_lens=None, return_codes=False):
+    def forward_v3(self, x, wave_segments, msg, n_c=1, n_t=2, full_waves=None, wave_lens=None, return_codes=False):
         # timbre = self.timbre_encoder(x, sequence_mask(mel_lens, mels.size(-1)).unsqueeze(1))
         if full_waves is None:
             mel = self.preprocess(wave_segments, n_bins=80)     # (B, 80, T)
@@ -472,7 +476,7 @@ class FAquantizer(nn.Module):
             mel = self.preprocess(full_waves, n_bins=80)        # (B, 80, T)
             timbre = self.timbre_encoder(mel, sequence_mask(wave_lens // self.hop_length, mel.size(-1)).unsqueeze(1))
         outs = 0
-        if self.separate_prosody_encoder:       # 学習時True
+        if self.separate_prosody_encoder:       # True
             prosody_feature = self.preprocess(wave_segments)        # n_bin=20
 
             f0_input = prosody_feature  # (B, 20, T)        メルスペクトログラムの低い周波数を使用
@@ -499,7 +503,15 @@ class FAquantizer(nn.Module):
         z_c, codes_c, latents_c, commitment_loss_c, codebook_loss_c = self.content_quantizer(
             x, n_c
         )
-        outs += z_c.detach()
+        """
+        ここにwatermarkingの処理を書く
+        msg shape (B, 1, bits)
+        z_cのシェイプは(B, 1024, T)
+        """
+        watermark_encoded = self.msg_linear(msg).transpose(1,2).repeat(1,1,z_c.size(2))
+        concatenated_feature = torch.cat((z_c.detach(), watermark_encoded), dim=1).transpose(1,2)
+        z_c_emb = self.watermark_emb(concatenated_feature).transpose(1,2)
+        outs += z_c_emb
 
         residual_feature = x - z_p.detach() - z_c.detach()
 
