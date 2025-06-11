@@ -12,6 +12,9 @@ import time
 
 import torchaudio
 import librosa
+from torch.utils.data import DataLoader
+from dataset import Librilight, collate_fn
+from optimizers import build_optimizer
 
 # set seeds
 seed = 2022
@@ -98,11 +101,34 @@ def make_watermark_extracter(args):
 
     
 def main(args):
-    # モデルの定義
+    # モデルの作成
     watermark_model = make_watermark_model(args)
     extracter = make_watermark_extracter(args)
 
     # データセットの準備
+    train_dataset = Librilight()
+    train_loader = DataLoader(train_dataset,
+                              batch_size=hp.batch_size, 
+                              num_workers=4, 
+                              drop_last=True, 
+                              shuffle=True, 
+                              collate_fn=collate_fn, 
+                              pin_memory=True)
+
+    # otimizerの準備
+    scheduler_params = {
+        "warmup_steps": 200,
+        "base_lr": 0.0001
+    }
+    watermark_optimizer = build_optimizer({key: watermark_model[key] for key in watermark_model},
+                                           scheduler_params_dict={key: scheduler_params.copy() for key in watermark_model},
+                                           lr=float(scheduler_params['base_lr']))
+    extracter_optimizer = build_optimizer({key: extracter[key] for key in extracter},
+                                           scheduler_params_dict={key: scheduler_params.copy() for key in extracter},
+                                           lr=float(scheduler_params['base_lr']))
+
+
+    # 損失関数の準備
 
     # 学習
 
