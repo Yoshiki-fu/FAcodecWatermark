@@ -3,6 +3,7 @@ import argparse
 import torch
 import os
 import yaml
+#from tqdm import tqdm
 
 warnings.simplefilter('ignore')
 
@@ -15,6 +16,7 @@ import librosa
 from torch.utils.data import DataLoader
 from dataset import Librilight, collate_fn
 from optimizers import build_optimizer
+import watermark_hparams as hp
 
 # set seeds
 seed = 2022
@@ -101,6 +103,7 @@ def make_watermark_extracter(args):
 
     
 def main(args):
+
     # モデルの作成
     watermark_model = make_watermark_model(args)
     extracter = make_watermark_extracter(args)
@@ -129,8 +132,70 @@ def main(args):
 
 
     # 損失関数の準備
+    content_criterion = FocalLoss(gamma=2).to(device)
+    stft_criterion = MultiScaleSTFTLoss().to(device)
+    mel_criterion = MelSpectrogramLoss(
+        n_mels=[5, 10, 20, 40, 80, 160, 320],
+        window_lengths=[32, 64, 128, 256, 512, 1024, 2048],
+        mel_fmin=[0, 0, 0, 0, 0, 0, 0],
+        mel_fmax=[None, None, None, None, None, None, None],
+        pow=1.0,
+        mag_weight=0.0,
+        clamp_eps=1e-5,
+    ).to(device)
+    l1_criterion = L1Loss().to(device)
+
 
     # 学習
+    start_epoch = 0
+    for epoch in range(start_epoch, hp.epoch):
+        start_time = time.time()
+        _ = [watermark_model[key].train() for key in watermark_model]
+        _ = [extracter[key].train() for key in extracter]
+        last_time = time.time()
+        for i, batch in enumerate(train_loader):
+            watermark_optimizer.zero_grad()
+            extracter_optimizer.zero_grad()
+
+            train_start_time = time.time()
+
+            batch = [b.to(device, non_blocking=True) for b in batch]
+            waves, mels, wav_lengths, mel_input_length = batch      # waves shape is (batch_size, sample_num), mel shape is (batch_size, freq_bin, frame)
+
+            # get clips
+            mel_seg_len = min([int(mel_input_length.min().item()), hp.max_frame_len])
+
+            gt_mel_seg = []
+            wav_seg = []
+
+            for bib in range(len(mel_input_length)):
+                mel_length = int(mel_input_length[bib].item())
+
+                random_start = np.random.randint(0, mel_length - mel_seg_len) if mel_length != mel_seg_len else 0
+                gt_mel_seg.append(mels[bib, :, random_start:random_start + mel_seg_len])
+
+                y = waves[bib][random_start * 300:(random_start + mel_seg_len) * 300]
+
+                wav_seg.append(y.to(device))
+
+            gt_mel_seg = torch.stack(gt_mel_seg).detach()
+
+            wav_seg = torch.stack(wav_seg).float().detach().unsqueeze(1)
+
+            wav_seg_input = wav_seg
+            wav_seg_target = wav_seq
+
+            z = model.encoder(wav_seg_input)
+
+            msg = np.random.choice([0,1], [hp.batch_size, 1, hp.msg_len])
+            
+            
+
+
+
+
+
+
 
     return
 
