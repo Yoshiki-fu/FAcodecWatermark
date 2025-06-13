@@ -1,7 +1,33 @@
+import os
+import librosa
+
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset
+
 import watermark_hparams as hp
+
+
+SPECT_PARAMS = {
+    "n_fft": 2048,
+    "win_length": 1200,
+    "hop_length": 300,
+}
+MEL_PARAMS = {
+    "n_mels": 80,
+}
+
+to_mel = torchaudio.transforms.MelSpectrogram(
+    n_mels=MEL_PARAMS['n_mels'], **SPECT_PARAMS)
+mean, std = -4, 4
+
+
+def preprocess(wave):
+    # wave = wave.unsqueeze(0)
+    wave_tensor = torch.from_numpy(wave).float() if isinstance(wave, np.ndarray) else wave
+    mel_tensor = to_mel(wave_tensor)
+    mel_tensor = (torch.log(1e-5 + mel_tensor.unsqueeze(0)) - mean) / std
+    return mel_tensor
 
 class Librilight(Dataset):
     def __init__(self, sr=24000, range=(1, 30)):
@@ -9,7 +35,7 @@ class Librilight(Dataset):
         self.sr = sr
         self.duration_range = range
 
-     def get_all_data_path(self, dir_path, extensions=None):
+    def get_all_data_path(self, dir_path, extensions=None):
         file_paths = []
         if extensions is not None:
             extensions = tuple(extensions)
@@ -23,7 +49,7 @@ class Librilight(Dataset):
     def __len__(self):
         return len(self.data_list)
 
-        def __getitem__(self, idx):
+    def __getitem__(self, idx):
         # replace this with your own data loading
         wave, sr = librosa.load(self.data_list[idx], sr=self.sr)
         # wave = np.random.randn(self.sr * random.randint(*self.duration_range))

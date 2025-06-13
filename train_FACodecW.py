@@ -3,6 +3,7 @@ import argparse
 import torch
 import os
 import yaml
+import random
 #from tqdm import tqdm
 
 warnings.simplefilter('ignore')
@@ -15,8 +16,9 @@ import torchaudio
 import librosa
 from torch.utils.data import DataLoader
 import torch.nn as nn
-from dataset import Librilight, collate_fn
+from dataset import Librilight, collate
 from optimizers import build_optimizer
+from dac.nn.loss import MultiScaleSTFTLoss, MelSpectrogramLoss, L1Loss
 import watermark_hparams as hp
 
 from audiotools import AudioSignal
@@ -120,7 +122,7 @@ def main(args):
                               num_workers=4, 
                               drop_last=True, 
                               shuffle=True, 
-                              collate_fn=collate_fn, 
+                              collate_fn=collate, 
                               pin_memory=True)
 
     # otimizerの準備
@@ -149,13 +151,13 @@ def main(args):
         clamp_eps=1e-5,
     ).to(device)
     l1_criterion = L1Loss().to(device)
-    msg_criterion = nn.MSE().to(device)
+    msg_criterion = nn.MSELoss().to(device)
 
 
     # 学習
     start_epoch = 0
     iters = 0
-
+    print(f"エポック数: {hp.epoch}")
     for epoch in range(start_epoch, hp.epoch):
         start_time = time.time()
         _ = [watermark_model[key].train() for key in watermark_model]
@@ -269,8 +271,6 @@ def main(args):
                     print("Epoch %d, Iteration %d, Total Loss: %.4f, Disc Loss: %.4f, mel Loss: %.4f, msg Loss: %.4f, Time: %.4f" % (epoch, iters, loss_gen_all.item(), loss_d.item(), mel_loss.item(), msg_loss.item(), train_time_per_step))
                 
 
-            
-
             iters = iters + 1
 
 
@@ -285,5 +285,4 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     
-    #make_watermark_model(args)
-    make_watermark_extracter(args)
+    main(args)
