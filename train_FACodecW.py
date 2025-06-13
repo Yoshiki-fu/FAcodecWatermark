@@ -14,11 +14,13 @@ import time
 import torchaudio
 import librosa
 from torch.utils.data import DataLoader
+import torch.nn as nn
 from dataset import Librilight, collate_fn
 from optimizers import build_optimizer
 import watermark_hparams as hp
 
 from audiotools import AudioSignal
+from torch.utils.tensorboard import SummaryWriter
 
 # set seeds
 seed = 2022
@@ -105,6 +107,7 @@ def make_watermark_extracter(args):
 
     
 def main(args):
+    writer = SummaryWriter("./tensorboard_logs")
 
     # モデルの作成
     watermark_model = make_watermark_model(args)
@@ -146,10 +149,13 @@ def main(args):
         clamp_eps=1e-5,
     ).to(device)
     l1_criterion = L1Loss().to(device)
+    msg_criterion = nn.MSE().to(device)
 
 
     # 学習
     start_epoch = 0
+    iters = 0
+
     for epoch in range(start_epoch, hp.epoch):
         start_time = time.time()
         _ = [watermark_model[key].train() for key in watermark_model]
@@ -199,6 +205,8 @@ def main(args):
                                                                                             full_waves=waves, 
                                                                                             wave_lens=wave_lengths)
             pred_wave = watermark_model.decoder(z)
+
+            pred_msg = = extracter.encoder(pred_wave)
 
             len_diff = wav_seg_target.size(-1) - pred_wave.size(-1)
             if len_diff > 0:
@@ -254,20 +262,16 @@ def main(args):
 
             train_time_per_step = time.time() - train_start_time
 
+            if iters % hp.log_step == 0:
+                with torch.no_grad():
+                print("Epoch %d, Iteration %d, Gen Loss: %.4f, Disc Loss: %.4f, mel Loss: %.4f, Time: %.4f" % (epoch, iters, loss_gen_all.item(), loss_d.item(), mel_loss.item(), train_time_per_step))
+
             
-            
+
+            iters = iters + 1
 
 
             
-
-
-
-
-
-
-
-
-    return
 
     
 

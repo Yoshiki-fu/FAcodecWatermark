@@ -6,3 +6,4 @@ batch_size = 8
 max_frame_len = 80
 epoch = 1000
 train_data_path = ""
+log_step = 5
