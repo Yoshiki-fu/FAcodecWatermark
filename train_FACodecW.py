@@ -18,6 +18,8 @@ from dataset import Librilight, collate_fn
 from optimizers import build_optimizer
 import watermark_hparams as hp
 
+from audiotools import AudioSignal
+
 # set seeds
 seed = 2022
 random.seed(seed)
@@ -123,8 +125,8 @@ def main(args):
         "warmup_steps": 200,
         "base_lr": 0.0001
     }
-    watermark_optimizer = build_optimizer({key: watermark_model[key] for key in watermark_model},
-                                           scheduler_params_dict={key: scheduler_params.copy() for key in watermark_model},
+    watermark_optimizer = build_optimizer({key: watermark_model[key] for key in ['quantizer', 'decoder', 'discriminator']},
+                                           scheduler_params_dict={key: scheduler_params.copy() for key in ['quantizer', 'decoder', 'discriminator']},
                                            lr=float(scheduler_params['base_lr']))
     extracter_optimizer = build_optimizer({key: extracter[key] for key in extracter},
                                            scheduler_params_dict={key: scheduler_params.copy() for key in extracter},
@@ -183,13 +185,81 @@ def main(args):
             wav_seg = torch.stack(wav_seg).float().detach().unsqueeze(1)
 
             wav_seg_input = wav_seg
-            wav_seg_target = wav_seq
+            wav_seg_target = wav_seg
 
-            z = model.encoder(wav_seg_input)
+            z = watermark_model.encoder(wav_seg_input)
 
+            # prepare message
             msg = np.random.choice([0,1], [hp.batch_size, 1, hp.msg_len])
+
+            z, quantized, commitment_loss, codebook_loss, timbre, z_c_emb = watermark_model.quantizer(z, 
+                                                                                            wav_seg_input, 
+                                                                                            msg, 
+                                                                                            n_c=2, 
+                                                                                            full_waves=waves, 
+                                                                                            wave_lens=wave_lengths)
+            pred_wave = watermark_model.decoder(z)
+
+            len_diff = wav_seg_target.size(-1) - pred_wave.size(-1)
+            if len_diff > 0:
+                wav_seg_target = wav_seg_target[..., len_diff // 2:-len_diff // 2]
+
+            # dicriminator loss
+            d_fake = watermark_model.discriminator(pred_wave.detach())
+            d_real = watermark_model.discriminator(wav_seg_target)
+            loss_d = 0
+            for x_fake, x_real in zip(d_fake, d_real):
+                loss_d += torch.mean(x_fake[-1] ** 2)
+                loss_d += torch.mean((1 - x_real[-1]) ** 2)
+                
+            loss_d.backward()
+            grad_norm_d = torch.nn.utils.clip_grad_norm_(watermark_model.discriminator.parameters(), 10.0)
+            watermark_optimizer.step('discriminator')
+            watermark_optimizer.scheduler(key='discriminator')
+
+            # generator loss
+            signal = AudioSignal(wav_seg_target, sample_rate=24000)
+            recons = AudioSignal(pred_wave, sample_rate=24000)
+            stft_loss = stft_criterion(recons, signal)
+            mel_loss = mel_criterion(recons, signal)
+            waveform_loss = l1_criterion(recons, signal)
+
+            d_fake = watermark_model.discriminator(pred_wave)
+            d_real = watermark_model.discriminator(wav_seg_target)
+
+            loss_g = 0
+            for x_fake in d_fake:
+                loss_g += torch.mean((1 - x_fake[-1]) ** 2)
+
+            loss_feature = 0
+
+            for i in range(len(d_fake)):
+                for j in range(len(d_fake[i]) - 1):
+                    loss_feature += F.l1_loss(d_fake[i][j], d_real[i][j].detach())
+                
+            loss_gen_all = (waveform_loss + mel_loss + stft_loss) * 1.0 + loss_feature * 1.0 + loss_g * 1.0
+            loss_gen_all.backward()
+
+            grad_norm_g2 = torch.nn.utils.clip_grad_norm_(watermark_model.decoder.parameters(), 1000.0)
+            grad_norm_g3 = torch.nn.utils.clip_grad_norm_(watermark_model.quantizer.parameters(), 1000.0)
+            grad_norm_g4 = torch.nn.utils.clip_grad_norm_(extracter.encoder.parameters(), 10.0)
+
+            watermark_optimizer.step('quantizer')
+            watermark_optimizer.step('decoder')
+            extracter_optimizer.step('encoder')
+
+            watermark_optimizer.scheduler(key='quantizer')
+            watermark_optimizer.scheduler(key='decoder')
+            extracter_optimizer.scheduler(key='encoder')
+
+            train_time_per_step = time.time() - train_start_time
+
             
             
+
+
+            
+
 
 
 

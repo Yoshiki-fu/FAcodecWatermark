@@ -552,9 +552,9 @@ class FAquantizer(nn.Module):
         outs = outs * gamma + beta
 
         if return_codes:
-            return outs, quantized, commitment_losses, codebook_losses, timbre, codes
+            return outs, quantized, commitment_losses, codebook_losses, timbre, z_c_emb, codes
         else:
-            return outs, quantized, commitment_losses, codebook_losses, timbre
+            return outs, quantized, commitment_losses, codebook_losses, timbre, z_c_emb
 
 class FApredictors(nn.Module):
     def __init__(self,
