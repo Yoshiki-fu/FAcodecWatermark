@@ -206,7 +206,9 @@ def main(args):
                                                                                             wave_lens=wave_lengths)
             pred_wave = watermark_model.decoder(z)
 
-            pred_msg = = extracter.encoder(pred_wave)
+            pred_msg = extracter.encoder(pred_wave)
+
+            msg_loss = msg_criterion(pred_msg, msg)
 
             len_diff = wav_seg_target.size(-1) - pred_wave.size(-1)
             if len_diff > 0:
@@ -245,7 +247,7 @@ def main(args):
                 for j in range(len(d_fake[i]) - 1):
                     loss_feature += F.l1_loss(d_fake[i][j], d_real[i][j].detach())
                 
-            loss_gen_all = (waveform_loss + mel_loss + stft_loss) * 1.0 + loss_feature * 1.0 + loss_g * 1.0
+            loss_gen_all = (waveform_loss + mel_loss + stft_loss) * 1.0 + loss_feature * 1.0 + loss_g * 1.0 + msg_loss * 1.0
             loss_gen_all.backward()
 
             grad_norm_g2 = torch.nn.utils.clip_grad_norm_(watermark_model.decoder.parameters(), 1000.0)
@@ -264,7 +266,8 @@ def main(args):
 
             if iters % hp.log_step == 0:
                 with torch.no_grad():
-                print("Epoch %d, Iteration %d, Gen Loss: %.4f, Disc Loss: %.4f, mel Loss: %.4f, Time: %.4f" % (epoch, iters, loss_gen_all.item(), loss_d.item(), mel_loss.item(), train_time_per_step))
+                    print("Epoch %d, Iteration %d, Total Loss: %.4f, Disc Loss: %.4f, mel Loss: %.4f, msg Loss: %.4f, Time: %.4f" % (epoch, iters, loss_gen_all.item(), loss_d.item(), mel_loss.item(), msg_loss.item(), train_time_per_step))
+                
 
             
 

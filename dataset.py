@@ -4,7 +4,7 @@ from torch.utils.data import Dataset
 import watermark_hparams as hp
 
 class Librilight(Dataset):
-    def __init__(self, sr=24000, range(1, 30)):
+    def __init__(self, sr=24000, range=(1, 30)):
         self.data_list = self.get_all_data_path(dir_path=hp.train_data_path, extensions=['.wav'])
         self.sr = sr
         self.duration_range = range
