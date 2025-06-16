@@ -283,7 +283,24 @@ def main(args):
                     writer.add_scalar('train/msg_acc', decoder_acc[0], iters)
                     writer.add_scalar('train/loss_g', loss_g.item(), iters)
                     witer.add_scalar('train/loss_feature', loss_feature.item(), iters)
-                
+
+            
+            if iters % hp.save_interval == 0:
+                os.makedirs(hp.save_path, exist_ok=True)
+                save_path = os.path.join(hp.save_path, f"/watermark_model_epoch_{epoch}_iter_{iters}.pth")
+                torch.save({
+                    'net': {key: watermark_model[key].state_dict() for key in watermark_model},
+                    'optimizer': watermark_optimizer.state_dict(),
+                    'epoch': epoch,
+                    'iters': iters
+                }, save_path)
+                save_path = os.path.join(hp.save_path, f"/extracter_model_epoch_{epoch}_iter_{iters}.pth")
+                torch.save({
+                    'net': {key: extracter[key].state_dict() for key in extracter},
+                    'optimizer': extracter_optimizer.state_dict(),
+                    'epoch': epoch,
+                    'iters': iters
+                }, save_path)
 
             iters = iters + 1
 
