@@ -170,7 +170,7 @@ def main(args):
             train_start_time = time.time()
 
             batch = [b.to(device, non_blocking=True) for b in batch]
-            waves, mels, wav_lengths, mel_input_length = batch      # waves shape is (batch_size, sample_num), mel shape is (batch_size, freq_bin, frame)
+            waves, mels, wave_lengths, mel_input_length = batch      # waves shape is (batch_size, sample_num), mel shape is (batch_size, freq_bin, frame)
 
             # get clips
             mel_seg_len = min([int(mel_input_length.min().item()), hp.max_frame_len])
@@ -199,6 +199,8 @@ def main(args):
 
             # prepare message
             msg = np.random.choice([0,1], [hp.batch_size, 1, hp.msg_len])
+            msg = torch.from_numpy(msg).float()*2 - 1
+            msg = msg.to(device)
 
             z, quantized, commitment_loss, codebook_loss, timbre, z_c_emb = watermark_model.quantizer(z, 
                                                                                             wav_seg_input, 
@@ -266,9 +268,21 @@ def main(args):
 
             train_time_per_step = time.time() - train_start_time
 
+            # cal accurancy
+            decoder_acc = [((pred_msg >= 0).eq(msg >= 0).sum().float() / msg.numel()).item()]
+
             if iters % hp.log_step == 0:
                 with torch.no_grad():
-                    print("Epoch %d, Iteration %d, Total Loss: %.4f, Disc Loss: %.4f, mel Loss: %.4f, msg Loss: %.4f, Time: %.4f" % (epoch, iters, loss_gen_all.item(), loss_d.item(), mel_loss.item(), msg_loss.item(), train_time_per_step))
+                    print("Epoch %d, Iteration %d, Total Loss: %.4f, Disc Loss: %.4f, mel Loss: %.4f, msg Loss: %.4f, msg acc: %.4f, Time: %.4f" % (epoch, iters, loss_gen_all.item(), loss_d.item(), mel_loss.item(), msg_loss.item(), decoder_acc[0], train_time_per_step))
+                    writer.add_scalar('train/loss', loss_gen_all.item(), iters)
+                    writer.add_scalar('train/disc_loss', loss_d.item(), iters)
+                    writer.add_scalar('train/waveform_loss', waveform_loss.item(), iters)
+                    writer.add_scalar('train/stft_loss', stft_loss.item(), iters)
+                    writer.add_scalar('train/mel_loss', mel_loss.item(), iters)
+                    writer.add_scalar('train/msg_loss', msg_loss.item(), iters)
+                    writer.add_scalar('train/msg_acc', decoder_acc[0], iters)
+                    writer.add_scalar('train/loss_g', loss_g.item(), iters)
+                    witer.add_scalar('train/loss_feature', loss_feature.item(), iters)
                 
 
             iters = iters + 1

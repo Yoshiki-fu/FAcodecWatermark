@@ -242,7 +242,7 @@ class FAquantizer(nn.Module):
         
         if timbre_norm and watermark:
             self.msg_linear = FCBlock(hp.msg_len, 1024, activation=LeakyReLU(inplace=True))
-            self.watermark_emb = FCBlock(2024, 1024)
+            self.watermark_emb = FCBlock(2048, 1024)
             self.forward = self.forward_v3      # watermarking用のforward
 
     def preprocess(self, wave_tensor, n_bins=20):
