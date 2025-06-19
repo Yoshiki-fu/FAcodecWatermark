@@ -122,8 +122,7 @@ def main(args):
                               num_workers=4, 
                               drop_last=True, 
                               shuffle=True, 
-                              collate_fn=collate, 
-                              pin_memory=True)
+                              collate_fn=collate)
 
     # otimizerの準備
     scheduler_params = {
