@@ -14,7 +14,6 @@ train.py
 train_redecoder.py
 webui.py
 meldataset.py
-gradient_reversal.py
 modules/JDC/
 Models/
 memo.txt

@@ -14,7 +14,7 @@ import time
 import torchaudio
 import librosa
 
-import watermarking.hparams as hp
+import watermark_hparams as hp
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
