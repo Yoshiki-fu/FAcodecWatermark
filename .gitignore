@@ -6,6 +6,16 @@ __pycache__/
 # C extensions
 *.so
 
+configs/config_redecoder.yml
+data/
+eval.py
+reconstruct_redecoder.py
+train.py
+train_redecoder.py
+webui.py
+meldataset.py
+gradient_reversal.py
+modules/JDC/
 Models/
 
 reconstructed/
