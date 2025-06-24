@@ -250,7 +250,7 @@ def main(args):
                 for j in range(len(d_fake[i]) - 1):
                     loss_feature += F.l1_loss(d_fake[i][j], d_real[i][j].detach())
                 
-            loss_gen_all = (waveform_loss + mel_loss + stft_loss) * 1.0 + loss_feature * 1.0 + loss_g * 1.0 + msg_loss * 1.0
+            loss_gen_all = (waveform_loss + mel_loss + stft_loss) * 1.0 + loss_feature * 1.0 + loss_g * 1.0 + msg_loss * 10.0
             loss_gen_all.backward()
 
             grad_norm_g2 = torch.nn.utils.clip_grad_norm_(watermark_model.decoder.parameters(), 1000.0)
