@@ -64,28 +64,28 @@ def main(args):
 
     # without timbre norm
     z = watermark_model.encoder(source_audio[None, ...].to(device).float())
-    z, quantized, commitment_loss, codebook_loss, timbre, z_c_emb = watermark_model.quantize(z,
+    z, quantized, commitment_loss, codebook_loss, timbre, z_c_emb = watermark_model.quantizer(z,
                                                                                              source_audio[None, ...].to(device).float(),
-                                                                                             msg
+                                                                                             msg,
                                                                                              n_c=2)
 
     pred_wave = watermark_model.decoder(z)
 
-    pred_msg = extracter.extract(pred_wave)
+    pred_msg = extracter.encoder(pred_wave)
 
     os.makedirs("reconstructed", exist_ok=True)
     source_name = source.split("/")[-1].split(".")[0]
-    torchaudio.save(f"reconstructed/{source_name}.wav", full_pred_wave[0].cpu(), 24000)
+    torchaudio.save(f"reconstructed/{source_name}.wav", pred_wave[0].cpu(), 24000)
 
     decoder_acc = [((pred_msg >= 0).eq(msg >= 0).sum().float() / msg.numel()).item()]
-    print(f"Decoder accuracy: {decoder_acc[0]}%")
+    print(f"Decoder accuracy: {decoder_acc[0]*100}%")
 
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--emb_ckpt_path', type=str, default='/workspace/checkpoints/')
-    parser.add_argument('--extract_ckpt_path', type=str, default='/workspace/checkpoints/')
+    parser.add_argument('--emb_ckpt_path', type=str, default='/workspace/checkpoints/log1/watermark_model_epoch_5_iter_221735.pth')
+    parser.add_argument('--extract_ckpt_path', type=str, default='/workspace/checkpoints/log1/extracter_model_epoch_5_iter_221735.pth')
     parser.add_argument('--config_path', type=str, default='/home/FAcodecWatermark/configs/config.yml')
     parser.add_argument('--source', type=str, default='/workspace/DS_10283_3443/wav48_data/p299/p299_001_mic1.wav')
     args = parser.parse_args()
