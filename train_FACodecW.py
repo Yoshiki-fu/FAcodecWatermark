@@ -20,6 +20,7 @@ from dataset import Librilight, collate
 from optimizers import build_optimizer
 from dac.nn.loss import MultiScaleSTFTLoss, MelSpectrogramLoss, L1Loss
 import watermark_hparams as hp
+from vad import double_threshold_vad
 
 from audiotools import AudioSignal
 from torch.utils.tensorboard import SummaryWriter
@@ -185,11 +186,13 @@ def main(args):
 
                 y = waves[bib][random_start * 300:(random_start + mel_seg_len) * 300]
 
-                wav_seg.append(y.to(device))
+                wav_seg.append(y)
+                vad.append(double_threshold_vad(y, sample_rate=24000, frame_duration=0.0125))
 
             gt_mel_seg = torch.stack(gt_mel_seg).detach()
 
-            wav_seg = torch.stack(wav_seg).float().detach().unsqueeze(1)
+            wav_seg = torch.stack(wav_seg).float().to(device).detach().unsqueeze(1)
+            vad = torch.stack(vad).float().to(device).detach().unsqueeze(1)
 
             wav_seg_input = wav_seg
             wav_seg_target = wav_seg

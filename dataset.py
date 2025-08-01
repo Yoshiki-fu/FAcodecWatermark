@@ -53,12 +53,20 @@ class Librilight(Dataset):
 
     def __getitem__(self, idx):
         # replace this with your own data loading
+        """wav_file = os.path.basename(self.data_list[idx])
+        vad_file = wav_file.split(".")[0] + "_vad_labels.npy"
+        dir_name = os.path.dirname(self.data_list[idx])
+        vad_path = os.path.join(dir_name, vad_file)"""
+
         wave, sr = librosa.load(self.data_list[idx], sr=self.sr)
+        #vad = np.load(vad_path)
+
         # wave = np.random.randn(self.sr * random.randint(*self.duration_range))
         # wave = wave / np.max(np.abs(wave))
         mel = preprocess(wave).squeeze(0)
         wave = torch.from_numpy(wave).float()
-        return wave, mel 
+        #vad = torch.from_numpy(vad).float()
+        return wave, mel #, vad
     
 def collate(batch):
      # batch[0] = wave, mel, text, f0, speakerid
@@ -75,16 +83,18 @@ def collate(batch):
 
     mels = torch.zeros((batch_size, nmels, max_mel_length)).float() - 10
     waves = torch.zeros((batch_size, max_wave_length)).float()
-
+    #vads = torch.zeros((batch_size, max_wave_length)).float()
+    
     mel_lengths = torch.zeros(batch_size).long()
     wave_lengths = torch.zeros(batch_size).long()
 
     # メルスペクトログラムと波形のそれぞれのpadding処理
-    for bid, (wave, mel) in enumerate(batch):
+    for bid, (wave, mel, vad) in enumerate(batch):
         mel_size = mel.size(1)
         mels[bid, :, :mel_size] = mel
         waves[bid, : wave.size(0)] = wave
+        #vads[bid, : vad.size(0)] = vad
         mel_lengths[bid] = mel_size
         wave_lengths[bid] = wave.size(0)
 
-    return waves, mels, wave_lengths, mel_lengths
+    return waves, mels, wave_lengths, mel_lengths   #, vads

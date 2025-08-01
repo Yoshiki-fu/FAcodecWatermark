@@ -460,7 +460,7 @@ def build_model(args, stage='codec'):
                             causal=args.causal,
                             separate_prosody_encoder=args.separate_prosody_encoder,
                             timbre_norm=args.timbre_norm,
-                            watermark=True,
+                            watermark_v2=True
                             )
 
     decoder = Decoder(

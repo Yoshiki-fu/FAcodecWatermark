@@ -13,7 +13,7 @@ from torch.nn.utils import weight_norm
 from torch import nn, sin, pow
 from einops.layers.torch import Rearrange
 from dac.model.encodec import SConv1d
-from modules.watermarking import FCBlock
+from modules.watermarking import FCBlock, WMEmbedder
 import watermark_hparams as hp
 
 def init_weights(m):
@@ -168,7 +168,9 @@ class FAquantizer(nn.Module):
                  causal=False,      # True
                  separate_prosody_encoder=False,        # True
                  timbre_norm=False,     # True
-                 watermark=False):       
+                 watermark=False,
+                 watermark_v2=False,
+                 ):       
         super(FAquantizer, self).__init__()
         conv1d_type = SConv1d# if causal else nn.Conv1d
         self.prosody_quantizer = ResidualVectorQuantize(
@@ -244,6 +246,10 @@ class FAquantizer(nn.Module):
             self.msg_linear = FCBlock(hp.msg_len, 1024, activation=LeakyReLU(inplace=True))
             self.watermark_emb = FCBlock(2048, 1024)
             self.forward = self.forward_v3      # watermarking用のforward
+        
+        if timbre_norm and watermark_v2:
+            self.msg_processor = WMEmbedder(nbits=16, input_dim=1024, nchunk_size=4)
+            self.forward = self.forward_v4
 
     def preprocess(self, wave_tensor, n_bins=20):
         mel_tensor = self.to_mel(wave_tensor.squeeze(1))
@@ -555,6 +561,8 @@ class FAquantizer(nn.Module):
             return outs, quantized, commitment_losses, codebook_losses, timbre, z_c_emb, codes
         else:
             return outs, quantized, commitment_losses, codebook_losses, timbre, z_c_emb
+    
+    def forward_v4(self, x, wave_segments, msg, n_c=1, n_t=2, full_waves=None, wave_lens=None, return_codes=False):
 
 class FApredictors(nn.Module):
     def __init__(self,
