@@ -21,6 +21,7 @@ from optimizers import build_optimizer
 from dac.nn.loss import MultiScaleSTFTLoss, MelSpectrogramLoss, L1Loss
 import watermark_hparams as hp
 from vad import double_threshold_vad
+from modules.watermarking import hex_to_bin
 
 from audiotools import AudioSignal
 from torch.utils.tensorboard import SummaryWriter
@@ -60,16 +61,14 @@ def make_watermark_model(args):
                 
         new_model[block_i].load_state_dict(new_state_dict)
         # 事前学習した重みを凍結
-        if block_i in ['encoder', 'quantizer']:
+        if block_i in ['encoder', 'quantizer', 'decoder']:
             for param in new_model[block_i].parameters():
                 param.requires_grad = False
     
     # 学習したい重み
-    for param in new_model['quantizer'].watermark_emb.parameters():
+    for param in new_model['quantizer'].msg_processor.parameters():
         param.requires_grad = True  # watermark_embのパラメータは学習可能にする
 
-    for param in new_model['quantizer'].msg_linear.parameters():
-        param.requires_grad = True
     
     _ = [new_model[key].train() for key in new_model]
     _ = [new_model[key].to(device) for key in new_model]
@@ -82,7 +81,7 @@ def make_watermark_extracter(args):
     config_path = args.config_path
     config = yaml.safe_load(open(config_path))
     model_params = recursive_munch(config['model_params'])
-    new_model = build_model(model_params, 'extracter')
+    new_model = build_model(model_params, 'extracter_v2')
     
     # 古いモデルのチェックポイントの読み込み
     ckpt_params = torch.load(ckpt_path)
@@ -102,6 +101,14 @@ def make_watermark_extracter(args):
                 print(layer)
 
         new_model[block_i].load_state_dict(new_state_dict)
+        # 事前学習した重みを凍結
+        if block_i in ['encoder', 'quantizer']:
+            for param in new_model[block_i].parameters():
+                param.requires_grad = False
+
+            # 学習したい重み
+    for param in new_model['quantizer'].wm_detector.parameters():
+        param.requires_grad = True
 
     _ = [new_model[key].train() for key in new_model]
     _ = [new_model[key].to(device) for key in new_model]
@@ -151,8 +158,10 @@ def main(args):
         clamp_eps=1e-5,
     ).to(device)
     l1_criterion = L1Loss().to(device)
-    msg_criterion = nn.MSELoss().to(device)
-
+    #msg_criterion = nn.MSELoss().to(device)
+    vad_criterion = nn.BCEWithLogitsLoss().to(device)
+    cos_sim_criterion = nn.CosineEmbeddingLoss().to(device)
+    msg_criterion = nn.CrossEntropyLoss().to(device)
 
     # 学習
     start_epoch = 0
@@ -202,20 +211,26 @@ def main(args):
 
             # prepare message
             msg = np.random.choice([0,1], [hp.batch_size, hp.msg_len])
-            msg = torch.from_numpy(msg).float()*2 - 1
+            msg = torch.tensor(msg)
             msg = msg.to(device)
 
-            z, quantized, commitment_loss, codebook_loss, timbre, z_c_emb = watermark_model.quantizer(z, 
-                                                                                            wav_seg_input, 
-                                                                                            msg, 
-                                                                                            n_c=2, 
-                                                                                            full_waves=waves, 
-                                                                                            wave_lens=wave_lengths)
+            z, quantized, commitment_loss, codebook_loss, timbre, z_c_emb, content_vec2, wm_content_vec2, chunk_label = watermark_model.quantizer(z, 
+                                                                                                                            wav_seg_input, 
+                                                                                                                            msg, 
+                                                                                                                            n_c=2, 
+                                                                                                                            full_waves=waves, 
+                                                                                                                            wave_lens=wave_lengths)
             pred_wave = watermark_model.decoder(z)
 
-            pred_msg = extracter.encoder(pred_wave)
+            h = extracter.encoder(pred_wave)
+            logit_vad, logit_chunk = extracter.quantizer(h, pred_wave)
 
-            msg_loss = msg_criterion(pred_msg, msg)
+            vad_loss = vad_criterion(logit_vad, vad)
+            msg_loss = msg_criterion(logit_chunk.transpose(1,2), chunk_label)       # 16進数で計算 logit_chunkの形状を確認した方がいいかも
+
+            wm_mean = wm_content_vec2.mean(dim=2)            # (B, D)
+            content_mean = content_vec2.detach().mean(dim=2) # (B, D)
+            sim_loss = cos_sim_criterion(wm_mean, content_mean, torch.ones(wm_mean.size(0)).to(device))
 
             len_diff = wav_seg_target.size(-1) - pred_wave.size(-1)
             if len_diff > 0:
@@ -254,7 +269,7 @@ def main(args):
                 for j in range(len(d_fake[i]) - 1):
                     loss_feature += F.l1_loss(d_fake[i][j], d_real[i][j].detach())
                 
-            loss_gen_all = (waveform_loss + mel_loss + stft_loss) * 1.0 + loss_feature * 1.0 + loss_g * 1.0 + msg_loss * 10.0
+            loss_gen_all = (waveform_loss + mel_loss + stft_loss) * 1.0 + loss_feature * 1.0 + loss_g * 1.0 + vad_loss * 1.0 + sim_loss * 2.0 + msg_loss * 1.0
             loss_gen_all.backward()
 
             grad_norm_g2 = torch.nn.utils.clip_grad_norm_(watermark_model.decoder.parameters(), 1000.0)
@@ -272,7 +287,8 @@ def main(args):
             train_time_per_step = time.time() - train_start_time
 
             # cal accurancy
-            decoder_acc = [((pred_msg >= 0).eq(msg >= 0).sum().float() / msg.numel()).item()]
+            binary_message = hex_to_bin(logit_chunk)
+            decoder_acc = [((binary_message).eq(msg).sum().float() / msg.numel()).item()]
 
             if iters % hp.log_step == 0:
                 with torch.no_grad():
@@ -286,11 +302,13 @@ def main(args):
                     writer.add_scalar('train/msg_acc', decoder_acc[0], iters)
                     writer.add_scalar('train/loss_g', loss_g.item(), iters)
                     writer.add_scalar('train/loss_feature', loss_feature.item(), iters)
+                    writer.add_scalar('train/vad_loss', vad_loss.item(), iters)
+                    writer.add_scalar('train/sim_loss', sim_loss.item(), iters)
 
             
             if iters % hp.save_interval == 0:
                 os.makedirs(hp.save_path, exist_ok=True)
-                save_path = os.path.join(hp.save_path, f"watermark_model_epoch_{epoch}_iter_{iters}.pth")
+                save_path = os.path.join(hp.save_path, f"watermarkv2_model_epoch_{epoch}_iter_{iters}.pth")
                 print(save_path)
                 torch.save({
                     'net': {key: watermark_model[key].state_dict() for key in watermark_model},
@@ -298,7 +316,7 @@ def main(args):
                     'epoch': epoch,
                     'iters': iters
                 }, save_path)
-                save_path = os.path.join(hp.save_path, f"extracter_model_epoch_{epoch}_iter_{iters}.pth")
+                save_path = os.path.join(hp.save_path, f"extracterv2_model_epoch_{epoch}_iter_{iters}.pth")
                 torch.save({
                     'net': {key: extracter[key].state_dict() for key in extracter},
                     'optimizer': extracter_optimizer.state_dict(),

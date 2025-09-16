@@ -13,7 +13,7 @@ from torch.nn.utils import weight_norm
 from torch import nn, sin, pow
 from einops.layers.torch import Rearrange
 from dac.model.encodec import SConv1d
-from modules.watermarking import FCBlock, WMEmbedder
+from modules.watermarking import FCBlock, WMEmbedder, WMDetector
 import watermark_hparams as hp
 
 def init_weights(m):
@@ -253,6 +253,7 @@ class FAquantizer(nn.Module):
             self.forward = self.forward_v4
 
         if extract_mode:
+            self.wm_detector = WMDetector(1024, nbits=16, nchunk_size=4)
             self.forward = self.forward_extract
         
 
@@ -420,24 +421,24 @@ class FAquantizer(nn.Module):
 
             x = x[:, :, :common_min_size]
 
-            z_p, codes_p, latents_p, commitment_loss_p, codebook_loss_p = self.prosody_quantizer(
+            z_p, codes_p, latents_p, commitment_loss_p, codebook_loss_p, _ = self.prosody_quantizer(
                 f0_input, 1
             )
             outs += z_p.detach()
         else:
-            z_p, codes_p, latents_p, commitment_loss_p, codebook_loss_p = self.prosody_quantizer(
+            z_p, codes_p, latents_p, commitment_loss_p, codebook_loss_p, _ = self.prosody_quantizer(
                 x, 1
             )
             outs += z_p.detach()
 
-        z_c, codes_c, latents_c, commitment_loss_c, codebook_loss_c = self.content_quantizer(
+        z_c, codes_c, latents_c, commitment_loss_c, codebook_loss_c, _ = self.content_quantizer(
             x, n_c
         )
         outs += z_c.detach()
 
         residual_feature = x - z_p.detach() - z_c.detach()
 
-        z_r, codes_r, latents_r, commitment_loss_r, codebook_loss_r = self.residual_quantizer(
+        z_r, codes_r, latents_r, commitment_loss_r, codebook_loss_r, _ = self.residual_quantizer(
             residual_feature, 3
         )
 
@@ -606,9 +607,9 @@ class FAquantizer(nn.Module):
         """
         ここにwatermarkingの処理を書く
         """
-        content_sub = out_quantized[1:]
-        content_sub = self.msg_processor(content_sub, msg)
-        z_c_emb = out_quantized[0] + content_sub
+        content_sub = out_quantized[1]
+        wm_content_sub, chunk_label = self.msg_processor(content_sub, msg)
+        z_c_emb = out_quantized[0] + wm_content_sub
         outs += z_c_emb
 
         residual_feature = x - z_p.detach() - z_c.detach()
@@ -650,9 +651,9 @@ class FAquantizer(nn.Module):
         outs = outs * gamma + beta
 
         if return_codes:
-            return outs, quantized, commitment_losses, codebook_losses, timbre, z_c_emb, codes
+            return outs, quantized, commitment_losses, codebook_losses, timbre, z_c_emb, codes, content_sub, wm_content_sub, chunk_label
         else:
-            return outs, quantized, commitment_losses, codebook_losses, timbre, z_c_emb
+            return outs, quantized, commitment_losses, codebook_losses, timbre, z_c_emb, content_sub, wm_content_sub, chunk_label
     
     def forward_extract(self, x, wave_segments, n_c=2, n_t=2, full_waves=None, wave_lens=None):      # n_c=2
          # timbre = self.timbre_encoder(x, sequence_mask(mel_lens, mels.size(-1)).unsqueeze(1))
@@ -713,8 +714,16 @@ class FAquantizer(nn.Module):
         if not self.training:
             res_mask = torch.ones_like(res_mask)
 
-        x = x - z_p.detach() - out_quantized[0].detach() - z_r * res_mask
+        # 声質を排除する処理を書かないといけない
+        # hからプロゾディ、言語の一本目のベクトル、音響を排除する
+        style = self.timbre_linear(timbre).unsqueeze(2)  # (B, 2d, 1)
+        gamma, beta = style.chunk(2, 1)   # (B, d, 1) -> gannma shape (B, 1024, 1), beta shape (B, 1024, 1)
+        x_no_timbre = (x - beta) / (gamma + 1e-8)
+        x_contentvec2 = x_no_timbre - z_p.detach() - out_quantized[0].detach() - z_r * res_mask       # x shape (B, 1024, T)
         # この後にself attention
+        logit_vad, logit_chunk = self.wm_detector(x_contentvec2)
+
+        return logit_vad, logit_chunk
 
 
 class FApredictors(nn.Module):

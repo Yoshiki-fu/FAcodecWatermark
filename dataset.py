@@ -89,7 +89,7 @@ def collate(batch):
     wave_lengths = torch.zeros(batch_size).long()
 
     # メルスペクトログラムと波形のそれぞれのpadding処理
-    for bid, (wave, mel, vad) in enumerate(batch):
+    for bid, (wave, mel) in enumerate(batch):
         mel_size = mel.size(1)
         mels[bid, :, :mel_size] = mel
         waves[bid, : wave.size(0)] = wave

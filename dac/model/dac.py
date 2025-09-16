@@ -110,6 +110,7 @@ class Encoder(nn.Module):       # 32層
             self.msg_linear_out = FCBlock(1024, hp.msg_len)
             self.forward = self.forward_v2
         elif extracter=="v2":
+            self.forward = self.forward
             
 
     def forward(self, x):

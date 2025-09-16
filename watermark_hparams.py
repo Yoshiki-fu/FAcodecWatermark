@@ -1,10 +1,10 @@
 # watermark detail
-msg_len = 10
+msg_len = 16
 
 # train setting
 batch_size = 8
 max_frame_len = 80
-epoch = 1000
+epoch = 30
 train_data_path = "/workspace/LibriTTS"
 log_step = 5
 save_interval = (354780 - 1) // batch_size      # ここはepoch単位で保存したいのでデータセットサイズごとに調整する

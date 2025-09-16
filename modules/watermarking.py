@@ -2,6 +2,31 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+def hex_to_bin(chunk_logits):
+    chunk_probs = F.softmax(chunk_logits, dim=-1)  # [batch, nchunks, 256]
+    chunk_indices = torch.argmax(
+        chunk_probs, dim=-1
+    )  # [batch, nchunks], each in [0..255]
+    # (3) Convert each byte back to 8 bits
+    #     Finally, assemble into a [batch, nbits] binary tensor
+    binary_message = []
+    for i in range(4):
+        chunk_val = chunk_indices[:, i]  # [batch]
+        # Extract 8 bits from the integer (0..255)
+        chunk_bits = []
+        for b in range(4):
+            bit_b = (chunk_val >> b) & 1  # get bit b
+            chunk_bits.append(bit_b.unsqueeze(-1))
+        # Concatenate bits to shape [batch, 8]
+        chunk_bits = torch.cat(chunk_bits, dim=-1)
+        binary_message.append(chunk_bits)
+
+    # Concatenate all bytes → [batch, nbits]
+    binary_message = torch.cat(binary_message, dim=-1)
+    
+    return binary_message
+
+
 class FCBlock(nn.Module):
     """ Fully Connected Block """
 
@@ -110,6 +135,7 @@ class WMEmbedder(nn.Module):
         # 2) Convert the msg bits into a sequence of chunk embeddings
         #    We keep each chunk as one token => [b, nchunks, hidden_dim]
         chunk_emb_list = []
+        chunk_list = []
         for i in range(self.nchunks):
             # msg[:, i*nchunk_size : (i+1)*nchunk_size] => shape [b, nchunk_size]
             chunk_bits = msg[:, i * self.nchunk_size : (i + 1) * self.nchunk_size]
@@ -121,9 +147,11 @@ class WMEmbedder(nn.Module):
             # embedding => [b, hidden_dim]
             chunk_emb = self.msg_embeddings[i](chunk_val)
             chunk_emb_list.append(chunk_emb.unsqueeze(1))  # => [b,1,hidden_dim]
+            chunk_list.append(chunk_val)
 
         # Concat => [b, nchunks, hidden_dim]
         chunk_emb_seq = torch.cat(chunk_emb_list, dim=1)  # [b, nchunks, hidden_dim]
+        chunk_label = torch.stack(chunk_list, dim=1).detach()
 
         # 3) Use chunk_emb_seq as memory, hidden_projected as target for TransformerDecoder
         #
@@ -144,7 +172,7 @@ class WMEmbedder(nn.Module):
         # 6) (Optional) Residual with original hidden
         x_output = x_output + hidden
 
-        return x_output
+        return x_output, chunk_label
     
 
 def random_message(nbits: int, batch_size: int) -> torch.Tensor:
@@ -152,3 +180,140 @@ def random_message(nbits: int, batch_size: int) -> torch.Tensor:
     if nbits == 0:
         return torch.tensor([])
     return torch.randint(0, 2, (batch_size, nbits))
+
+class WMDetector(nn.Module):
+    """
+    Detect watermarks in an audio signal using a Transformer architecture,
+    where the watermark bits are split into bytes (8 bits each).
+    We assume nbits is a multiple of 8.
+    """
+
+    def __init__(
+        self, input_channels: int, nbits: int, nchunk_size: int, d_model: int = 512
+    ):
+        """
+        Args:
+            input_channels (int): Number of input channels in the audio feature (e.g., mel channels).
+            nbits (int): Total number of bits in the watermark, must be a multiple of 8.
+            d_model (int): Embedding dimension for the Transformer.
+        """
+        super().__init__()
+        self.nchunk_size = nchunk_size
+        assert nbits % nchunk_size == 0, "nbits must be a multiple of 8!"
+        self.nbits = nbits
+        self.d_model = d_model
+        # Number of bytes
+        self.nchunks = nbits // nchunk_size
+
+        # 1D convolution to map the input channels to d_model
+        self.embedding = nn.Conv1d(input_channels, d_model, kernel_size=1)
+
+        # Transformer encoder block
+        self.transformer = nn.TransformerEncoder(
+            nn.TransformerEncoderLayer(
+                d_model=d_model,
+                nhead=1,
+                dim_feedforward=d_model * 2,
+                activation="gelu",
+                batch_first=True,
+            ),
+            num_layers=8,
+        )
+
+        # A linear head for watermark presence detection (binary)
+        self.watermark_head = nn.Linear(d_model, 1)
+
+        # For each byte, we perform a 256-way classification
+        self.message_heads = nn.ModuleList(
+            nn.Linear(d_model, 2**nchunk_size) for _ in range(self.nchunks)
+        )
+
+        # Learnable embeddings for each byte chunk (instead of per bit)
+        # Shape: [nchunks, d_model]
+        self.nchunk_embeddings = nn.Parameter(torch.randn(self.nchunks, d_model))
+
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Forward pass of the detector.
+
+        Returns:
+            logits (torch.Tensor): Watermark detection logits of shape [batch, seq_len].
+            chunk_logits (torch.Tensor): Byte-level classification logits of shape [batch, nchunks, 256].
+        """
+        batch_size, input_channels, time_steps = x.shape
+
+        # 1) Map [batch, in_channels, time_steps] → [batch, time_steps, d_model]
+        x = self.embedding(x).permute(0, 2, 1)  # [batch, time_steps, d_model]
+
+        # 2) Prepend chunk embeddings at the beginning of the sequence
+        #    [nchunks, d_model] → [1, nchunks, d_model] → [batch, nchunks, d_model]
+        nchunk_embeds = self.nchunk_embeddings.unsqueeze(0).expand(batch_size, -1, -1)
+        # Concatenate along the time dimension: [batch, nchunks + time_steps, d_model]
+        x = torch.cat([nchunk_embeds, x], dim=1)
+
+        # 3) Pass through the Transformer
+        x = self.transformer(x)
+        # x has shape [batch, nchunks + time_steps, d_model]
+
+        # (a) Watermark presence detection: skip the first nchunks
+        detection_part = x[:, self.nchunks :]  # [batch, time_steps, d_model]
+        logits = self.watermark_head(detection_part).squeeze(-1)  # [batch, time_steps]
+
+        # (b) Message decoding: use the first nchunks
+        message_part = x[:, : self.nchunks]  # [batch, nchunks, d_model]
+        chunk_logits_list = []
+        for i, head in enumerate(self.message_heads):
+            # message_part[:, i, :] has shape [batch, d_model]
+            # each head outputs [batch, 256]
+            chunk_vec = message_part[:, i, :]
+            chunk_logits_list.append(head(chunk_vec).unsqueeze(1))  # [batch, 1, 256]
+
+        # Concatenate along the 'nchunks' dimension → [batch, nchunks, 256]
+        chunk_logits = torch.cat(chunk_logits_list, dim=1)
+
+        return logits, chunk_logits
+
+    def detect_watermark(
+        self,
+        x: torch.Tensor,
+        threshold: float = 0.5,
+    ) -> tuple[float, torch.Tensor, torch.Tensor]:
+        """
+        A convenience function for inference.
+
+        Returns:
+            detect_prob (float): Probability that the audio is watermarked.
+            binary_message (torch.Tensor): The recovered message of shape [batch, nbits] (binary).
+            detected (torch.Tensor): The sigmoid values of the per-timestep watermark detection.
+        """
+        logits, chunk_logits = self.forward(x)
+        # logits: [batch, seq_len] → raw logits for watermark presence detection
+        # chunk_logits: [batch, nchunks, 256] → classification logits for each byte
+
+        # (1) Compute watermark detection probability
+        detected = torch.sigmoid(logits)  # [batch, seq_len]
+        detect_prob = detected.mean(dim=-1).cpu().item()
+
+        # (2) Decode the message: chunk_logits has shape [batch, nchunks, 256]
+        chunk_probs = F.softmax(chunk_logits, dim=-1)  # [batch, nchunks, 256]
+        chunk_indices = torch.argmax(
+            chunk_probs, dim=-1
+        )  # [batch, nchunks], each in [0..255]
+        # (3) Convert each byte back to 8 bits
+        #     Finally, assemble into a [batch, nbits] binary tensor
+        binary_message = []
+        for i in range(self.nchunks):
+            chunk_val = chunk_indices[:, i]  # [batch]
+            # Extract 8 bits from the integer (0..255)
+            chunk_bits = []
+            for b in range(self.nchunk_size):
+                bit_b = (chunk_val >> b) & 1  # get bit b
+                chunk_bits.append(bit_b.unsqueeze(-1))
+            # Concatenate bits to shape [batch, 8]
+            chunk_bits = torch.cat(chunk_bits, dim=-1)
+            binary_message.append(chunk_bits)
+
+        # Concatenate all bytes → [batch, nbits]
+        binary_message = torch.cat(binary_message, dim=-1)
+
+        return detect_prob, binary_message, detected

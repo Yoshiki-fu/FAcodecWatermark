@@ -519,7 +519,12 @@ def build_model(args, stage='codec'):
                         timbre_norm=args.timbre_norm,
                         extract_mode = True
                         )
-
+    
+    nets = Munch(
+      encoder=encoder,
+      quantizer=quantizer
+    )
+    
   else:
     raise ValueError(f"Unknown stage: {stage}")
 

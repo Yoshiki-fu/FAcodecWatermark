@@ -3,7 +3,7 @@ save_freq: 1
 log_interval: 10
 save_interval: 1000
 device: "cuda"
-epochs: 1000 # number of epochs for first stage training (pre-training)
+epochs: 30 # number of epochs for first stage training (pre-training)
 batch_size: 4
 batch_length: 100 # maximum duration of audio in a batch (in seconds)
 max_len: 80 # maximum number of frames
