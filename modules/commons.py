@@ -486,17 +486,39 @@ def build_model(args, stage='codec'):
       discriminator=discriminator,
     )
 
-  elif stage == 'extracter':
+  elif stage == 'extracter_v1':
     from dac.model.dac import Encoder
     encoder = Encoder(d_model=args.DAC.encoder_dim,   # 64
                   strides=args.DAC.encoder_rates,   # [2,5,5,6]
                   d_latent=1024,
                   causal=args.causal,   # True
                   lstm=args.lstm,
-                  extracter=True)    # 2
+                  extracter="v1")    # 2
     nets = Munch(
       encoder=encoder
     )
+  elif stage == 'extracter_v2':
+    from dac.model.dac import Encoder
+    from modules.quantize import FAquantizer
+    encoder = Encoder(d_model=args.DAC.encoder_dim,   # 64
+              strides=args.DAC.encoder_rates,   # [2,5,5,6]
+              d_latent=1024,
+              causal=args.causal,   # True
+              lstm=args.lstm,
+              extracter="v2")    # 2
+    quantizer = FAquantizer(in_dim=1024,
+                        n_p_codebooks=1,
+                        n_c_codebooks=args.n_c_codebooks,
+                        n_t_codebooks=2,
+                        n_r_codebooks=3,
+                        codebook_size=1024,
+                        codebook_dim=8,
+                        quantizer_dropout=0.5,
+                        causal=args.causal,
+                        separate_prosody_encoder=args.separate_prosody_encoder,
+                        timbre_norm=args.timbre_norm,
+                        extract_mode = True
+                        )
 
   else:
     raise ValueError(f"Unknown stage: {stage}")

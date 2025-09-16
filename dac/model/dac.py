@@ -77,7 +77,7 @@ class Encoder(nn.Module):       # 32層
         d_latent: int = 64,
         causal: bool = False,       # True
         lstm: int = 2,
-        extracter: bool = False
+        extracter: str = ""
     ):
         super().__init__()
         conv1d_type = SConv1d# if causal else WNConv1d      カーネルサイズstrideに合わせて自動で出力の長さを入力前と同じにしてくれるConv
@@ -104,11 +104,12 @@ class Encoder(nn.Module):       # 32層
         self.block = nn.Sequential(*self.block)
         self.enc_dim = d_model      # 1024
 
-        if extracter:
+        if extracter=="v1":
             self.separate_msg = FCBlock(1024, 2048)
             self.msg_linear = FCBlock(2048, 1024)
             self.msg_linear_out = FCBlock(1024, hp.msg_len)
             self.forward = self.forward_v2
+        elif extracter=="v2":
             
 
     def forward(self, x):

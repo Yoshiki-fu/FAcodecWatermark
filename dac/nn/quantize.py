@@ -157,17 +157,18 @@ class ResidualVectorQuantize(nn.Module):
 
         codebook_indices = []
         latents = []
+        out_quantized = []
 
         if n_quantizers is None:
             n_quantizers = self.n_codebooks
 
         # ランダムな量子化数ドロップアウト
-        if self.training:
+        """if self.training:
             n_quantizers = torch.ones((z.shape[0],)) * self.n_codebooks + 1
             dropout = torch.randint(1, self.n_codebooks + 1, (z.shape[0],))
             n_dropout = int(z.shape[0] * self.quantizer_dropout)
             n_quantizers[:n_dropout] = dropout[:n_dropout]
-            n_quantizers = n_quantizers.to(z.device)
+            n_quantizers = n_quantizers.to(z.device)"""
 
         for i, quantizer in enumerate(self.quantizers):
             if self.training is False and i >= n_quantizers:
@@ -178,23 +179,26 @@ class ResidualVectorQuantize(nn.Module):
             )
 
             # Create mask to apply quantizer dropout
-            mask = (
+            """mask = (
                 torch.full((z.shape[0],), fill_value=i, device=z.device) < n_quantizers
-            )
-            z_q = z_q + z_q_i * mask[:, None, None]
+            )"""
+            z_q = z_q + z_q_i       #* mask[:, None, None]
             residual = residual - z_q_i
 
             # Sum losses
-            commitment_loss += (commitment_loss_i * mask).mean()
-            codebook_loss += (codebook_loss_i * mask).mean()
+            """commitment_loss += (commitment_loss_i * mask).mean()
+            codebook_loss += (codebook_loss_i * mask).mean()"""
+            commitment_loss += commitment_loss_i.mean()
+            codebook_loss += codebook_loss_i.mean()
 
             codebook_indices.append(indices_i)
             latents.append(z_e_i)
+            out_quantized.append(z_q_i)
 
         codes = torch.stack(codebook_indices, dim=1)
         latents = torch.cat(latents, dim=1)
 
-        return z_q, codes, latents, commitment_loss, codebook_loss      # Z_q: 量子化器の出力, codes:各量子化器の何番目のコードブックを使ったか, latents:エンコーダの出力, commitment_loss:エンコーダを更新するためのロス, codebook_loss:コードブックを更新するためのロス
+        return z_q, codes, latents, commitment_loss, codebook_loss, out_quantized     # Z_q: 量子化器の出力, codes:各量子化器の何番目のコードブックを使ったか, latents:エンコーダの出力, commitment_loss:エンコーダを更新するためのロス, codebook_loss:コードブックを更新するためのロス
 
     def from_codes(self, codes: torch.Tensor):
         """Given the quantized codes, reconstruct the continuous representation

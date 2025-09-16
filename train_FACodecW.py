@@ -177,6 +177,7 @@ def main(args):
 
             gt_mel_seg = []
             wav_seg = []
+            vad = []
 
             for bib in range(len(mel_input_length)):
                 mel_length = int(mel_input_length[bib].item())
@@ -200,7 +201,7 @@ def main(args):
             z = watermark_model.encoder(wav_seg_input)
 
             # prepare message
-            msg = np.random.choice([0,1], [hp.batch_size, 1, hp.msg_len])
+            msg = np.random.choice([0,1], [hp.batch_size, hp.msg_len])
             msg = torch.from_numpy(msg).float()*2 - 1
             msg = msg.to(device)
 

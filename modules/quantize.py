@@ -170,6 +170,7 @@ class FAquantizer(nn.Module):
                  timbre_norm=False,     # True
                  watermark=False,
                  watermark_v2=False,
+                 extract_mode=False
                  ):       
         super(FAquantizer, self).__init__()
         conv1d_type = SConv1d# if causal else nn.Conv1d
@@ -250,6 +251,10 @@ class FAquantizer(nn.Module):
         if timbre_norm and watermark_v2:
             self.msg_processor = WMEmbedder(nbits=16, input_dim=1024, nchunk_size=4)
             self.forward = self.forward_v4
+
+        if extract_mode:
+            self.forward = self.forward_extract
+        
 
     def preprocess(self, wave_tensor, n_bins=20):
         mel_tensor = self.to_mel(wave_tensor.squeeze(1))
@@ -562,7 +567,155 @@ class FAquantizer(nn.Module):
         else:
             return outs, quantized, commitment_losses, codebook_losses, timbre, z_c_emb
     
-    def forward_v4(self, x, wave_segments, msg, n_c=1, n_t=2, full_waves=None, wave_lens=None, return_codes=False):
+    def forward_v4(self, x, wave_segments, msg, n_c=2, n_t=2, full_waves=None, wave_lens=None, return_codes=False):
+        # timbre = self.timbre_encoder(x, sequence_mask(mel_lens, mels.size(-1)).unsqueeze(1))
+        if full_waves is None:
+            mel = self.preprocess(wave_segments, n_bins=80)     # (B, 80, T)
+            timbre = self.timbre_encoder(mel, torch.ones(mel.size(0), 1, mel.size(2)).bool().to(mel.device))       # 話者性の抽出  
+        else:       # 学習時こっち、推論時こっち
+            mel = self.preprocess(full_waves, n_bins=80)        # (B, 80, T)
+            timbre = self.timbre_encoder(mel, sequence_mask(wave_lens // self.hop_length, mel.size(-1)).unsqueeze(1))
+        outs = 0
+        if self.separate_prosody_encoder:       # True
+            prosody_feature = self.preprocess(wave_segments)        # n_bin=20
+
+            f0_input = prosody_feature  # (B, 20, T)        メルスペクトログラムの低い周波数を使用
+            f0_input = self.melspec_linear(f0_input)        # (B, 256, T)
+            f0_input = self.melspec_encoder(f0_input, torch.ones(f0_input.shape[0], 1, f0_input.shape[2]).to(
+                f0_input.device).bool())
+            f0_input = self.melspec_linear2(f0_input)       # (B, 1024, T)
+
+            common_min_size = min(f0_input.size(2), x.size(2))
+            f0_input = f0_input[:, :, :common_min_size]
+
+            x = x[:, :, :common_min_size]
+
+            z_p, codes_p, latents_p, commitment_loss_p, codebook_loss_p, _ = self.prosody_quantizer(
+                f0_input, 1
+            )
+            outs += z_p.detach()
+        else:
+            z_p, codes_p, latents_p, commitment_loss_p, codebook_loss_p, _ = self.prosody_quantizer(
+                x, 1
+            )
+            outs += z_p.detach()
+
+        z_c, codes_c, latents_c, commitment_loss_c, codebook_loss_c, out_quantized = self.content_quantizer(
+            x, n_c
+        )
+        """
+        ここにwatermarkingの処理を書く
+        """
+        content_sub = out_quantized[1:]
+        content_sub = self.msg_processor(content_sub, msg)
+        z_c_emb = out_quantized[0] + content_sub
+        outs += z_c_emb
+
+        residual_feature = x - z_p.detach() - z_c.detach()
+
+        z_r, codes_r, latents_r, commitment_loss_r, codebook_loss_r, _  = self.residual_quantizer(
+            residual_feature, 3
+        )
+
+        bsz = z_r.shape[0]
+        res_mask = np.random.choice(
+            [0, 1],
+            size=bsz,
+            p=[
+                self.prob_random_mask_residual,
+                1 - self.prob_random_mask_residual,
+            ],
+        )
+        res_mask = (
+            torch.from_numpy(res_mask).unsqueeze(1).unsqueeze(1)
+        )  # (B, 1, 1)
+        res_mask = res_mask.to(
+            device=z_r.device, dtype=z_r.dtype
+        )
+
+        if not self.training:
+            res_mask = torch.ones_like(res_mask)
+        outs += z_r * res_mask
+
+        quantized = [z_p, z_c, z_r]
+        codes = [codes_p, codes_c, codes_r]
+        commitment_losses = commitment_loss_p + commitment_loss_c + commitment_loss_r
+        codebook_losses = codebook_loss_p + codebook_loss_c + codebook_loss_r
+
+        style = self.timbre_linear(timbre).unsqueeze(2)  # (B, 2d, 1)
+        gamma, beta = style.chunk(2, 1)  # (B, d, 1)
+        outs = outs.transpose(1, 2)
+        outs = self.timbre_norm(outs)
+        outs = outs.transpose(1, 2)
+        outs = outs * gamma + beta
+
+        if return_codes:
+            return outs, quantized, commitment_losses, codebook_losses, timbre, z_c_emb, codes
+        else:
+            return outs, quantized, commitment_losses, codebook_losses, timbre, z_c_emb
+    
+    def forward_extract(self, x, wave_segments, n_c=2, n_t=2, full_waves=None, wave_lens=None):      # n_c=2
+         # timbre = self.timbre_encoder(x, sequence_mask(mel_lens, mels.size(-1)).unsqueeze(1))
+        if full_waves is None:
+            mel = self.preprocess(wave_segments, n_bins=80)     # (B, 80, T)
+            timbre = self.timbre_encoder(mel, torch.ones(mel.size(0), 1, mel.size(2)).bool().to(mel.device))       # 話者性の抽出  
+        else:       # 学習時こっち、推論時こっち
+            mel = self.preprocess(full_waves, n_bins=80)        # (B, 80, T)
+            timbre = self.timbre_encoder(mel, sequence_mask(wave_lens // self.hop_length, mel.size(-1)).unsqueeze(1))
+        outs = 0
+        if self.separate_prosody_encoder:       # True
+            prosody_feature = self.preprocess(wave_segments)        # n_bin=20
+
+            f0_input = prosody_feature  # (B, 20, T)        メルスペクトログラムの低い周波数を使用
+            f0_input = self.melspec_linear(f0_input)        # (B, 256, T)
+            f0_input = self.melspec_encoder(f0_input, torch.ones(f0_input.shape[0], 1, f0_input.shape[2]).to(
+                f0_input.device).bool())
+            f0_input = self.melspec_linear2(f0_input)       # (B, 1024, T)
+
+            common_min_size = min(f0_input.size(2), x.size(2))
+            f0_input = f0_input[:, :, :common_min_size]
+
+            x = x[:, :, :common_min_size]
+
+            z_p, codes_p, latents_p, commitment_loss_p, codebook_loss_p, _ = self.prosody_quantizer(
+                f0_input, 1
+            )
+        else:
+            z_p, codes_p, latents_p, commitment_loss_p, codebook_loss_p, _ = self.prosody_quantizer(
+                x, 1
+            )
+
+        z_c, codes_c, latents_c, commitment_loss_c, codebook_loss_c, out_quantized = self.content_quantizer(
+            x, n_c
+        )
+        residual_feature = x - z_p.detach() - z_c.detach()
+
+        z_r, codes_r, latents_r, commitment_loss_r, codebook_loss_r, _ = self.residual_quantizer(
+            residual_feature, 3
+        )
+
+        bsz = z_r.shape[0]
+        res_mask = np.random.choice(
+            [0, 1],
+            size=bsz,
+            p=[
+                self.prob_random_mask_residual,
+                1 - self.prob_random_mask_residual,
+            ],
+        )
+        res_mask = (
+            torch.from_numpy(res_mask).unsqueeze(1).unsqueeze(1)
+        )  # (B, 1, 1)
+        res_mask = res_mask.to(
+            device=z_r.device, dtype=z_r.dtype
+        )
+
+        if not self.training:
+            res_mask = torch.ones_like(res_mask)
+
+        x = x - z_p.detach() - out_quantized[0].detach() - z_r * res_mask
+        # この後にself attention
+
 
 class FApredictors(nn.Module):
     def __init__(self,
