@@ -17,6 +17,8 @@ meldataset.py
 modules/JDC/
 Models/
 memo.txt
+make_VADLabels.py
+test100.py
 
 reconstructed/
 
