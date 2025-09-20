@@ -86,7 +86,7 @@ def make_watermark_extracter(args):
     # 古いモデルのチェックポイントの読み込み
     ckpt_params = torch.load(ckpt_path)
     ckpt_params = ckpt_params['net'] if 'net' in ckpt_params else ckpt_params  # adapt to format of self-trained checkpoints
-    ckpt_params = {key: value for key, value in ckpt_params.items() if key in ['encoder','quantizer','decoder','discriminator']}        # fa_predictorを除く
+    ckpt_params = {key: value for key, value in ckpt_params.items() if key in ['encoder','quantizer']}        # fa_predictorを除く
 
     new_layers = []
     for block_i, block_j in zip(new_model, ckpt_params):
@@ -137,11 +137,11 @@ def main(args):
         "warmup_steps": 200,
         "base_lr": 0.0001
     }
-    watermark_optimizer = build_optimizer({key: watermark_model[key] for key in ['quantizer', 'decoder', 'discriminator']},
-                                           scheduler_params_dict={key: scheduler_params.copy() for key in ['quantizer', 'decoder', 'discriminator']},
+    watermark_optimizer = build_optimizer({key: watermark_model[key] for key in ['quantizer', 'discriminator']},
+                                           scheduler_params_dict={key: scheduler_params.copy() for key in ['quantizer', 'discriminator']},
                                            lr=float(scheduler_params['base_lr']))
-    extracter_optimizer = build_optimizer({key: extracter[key] for key in extracter},
-                                           scheduler_params_dict={key: scheduler_params.copy() for key in extracter},
+    extracter_optimizer = build_optimizer({key: extracter[key] for key in ['quantizer']},
+                                           scheduler_params_dict={key: scheduler_params.copy() for key in ['quantizer']},
                                            lr=float(scheduler_params['base_lr']))
 
 
@@ -277,12 +277,10 @@ def main(args):
             grad_norm_g4 = torch.nn.utils.clip_grad_norm_(extracter.encoder.parameters(), 10.0)
 
             watermark_optimizer.step('quantizer')
-            watermark_optimizer.step('decoder')
-            extracter_optimizer.step('encoder')
+            extracter_optimizer.step('quantizer')
 
             watermark_optimizer.scheduler(key='quantizer')
-            watermark_optimizer.scheduler(key='decoder')
-            extracter_optimizer.scheduler(key='encoder')
+            extracter_optimizer.scheduler(key='quantizer')
 
             train_time_per_step = time.time() - train_start_time
 
