@@ -15,6 +15,7 @@ import torchaudio
 import librosa
 
 import watermark_hparams as hp
+from modules.watermarking import hex_to_bin
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -25,7 +26,7 @@ def load_model(args):
     config = yaml.safe_load(open(config_path))
     model_params = recursive_munch(config['model_params'])
     watemark_model = build_model(model_params, 'watermarking')
-    extracter = build_model(model_params, 'extracter')
+    extracter = build_model(model_params, 'extracter_v2')
 
     emb_ckpt_params = torch.load(emb_ckpt_path)
     emb_ckpt_params = emb_ckpt_params['net'] if 'net' in emb_ckpt_params else emb_ckpt_params  # adapt to format of self-trained checkpoints
@@ -58,34 +59,36 @@ def main(args):
     source_audio = torch.tensor(source_audio).unsqueeze(0).float().to(device)
 
     # prepare message
-    msg = np.random.choice([0,1], [1, 1, hp.msg_len])
-    msg = torch.from_numpy(msg).float()*2 - 1
+    msg = np.random.choice([0,1], [1, hp.msg_len])
+    msg = torch.tensor(msg)
     msg = msg.to(device)
 
     # without timbre norm
     z = watermark_model.encoder(source_audio[None, ...].to(device).float())
-    z, quantized, commitment_loss, codebook_loss, timbre, z_c_emb = watermark_model.quantizer(z,
-                                                                                             source_audio[None, ...].to(device).float(),
-                                                                                             msg,
-                                                                                             n_c=2)
+    z, quantized, commitment_loss, codebook_loss, timbre, z_c_emb, content_vec2, wm_content_vec2, chunk_label = watermark_model.quantizer(z,
+                                                                                                                                          source_audio[None, ...].to(device).float(),
+                                                                                                                                          msg,
+                                                                                                                                          n_c=2)
 
     pred_wave = watermark_model.decoder(z)
 
-    pred_msg = extracter.encoder(pred_wave)
+    h = extracter.encoder(pred_wave)
+    logit_vad, logit_chunk = extracter.quantizer(h, pred_wave, n_c=2)
+    binary_message = hex_to_bin(logit_chunk)
 
     os.makedirs("reconstructed", exist_ok=True)
     source_name = source.split("/")[-1].split(".")[0]
     torchaudio.save(f"reconstructed/{source_name}.wav", pred_wave[0].cpu(), 24000)
 
-    decoder_acc = [((pred_msg >= 0).eq(msg >= 0).sum().float() / msg.numel()).item()]
+    decoder_acc = [((binary_message).eq(msg).sum().float() / msg.numel()).item()]
     print(f"Decoder accuracy: {decoder_acc[0]*100}%")
 
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--emb_ckpt_path', type=str, default='/workspace/checkpoints/log1/watermark_model_epoch_5_iter_221735.pth')
-    parser.add_argument('--extract_ckpt_path', type=str, default='/workspace/checkpoints/log1/extracter_model_epoch_5_iter_221735.pth')
+    parser.add_argument('--emb_ckpt_path', type=str, default='/workspace/checkpoints/modelv2_1/watermarv2_model_epoch_11_iter_487817.pth')
+    parser.add_argument('--extract_ckpt_path', type=str, default='/workspace/checkpoints/modelv2_1/extracterv2_model_epoch_11_iter_487817.pth')
     parser.add_argument('--config_path', type=str, default='/home/FAcodecWatermark/configs/config.yml')
     parser.add_argument('--source', type=str, default='/workspace/DS_10283_3443/wav48_data/p299/p299_001_mic1.wav')
     args = parser.parse_args()
