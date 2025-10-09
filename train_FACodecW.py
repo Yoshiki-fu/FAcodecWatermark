@@ -225,7 +225,7 @@ def main(args):
             h = extracter.encoder(pred_wave)
             logit_vad, logit_chunk = extracter.quantizer(h, pred_wave)
 
-            vad_loss = vad_criterion(logit_vad, vad)
+            vad_loss = vad_criterion(logit_vad, vad.squeeze(1))
             msg_loss = msg_criterion(logit_chunk.transpose(1,2), chunk_label)       # 16進数で計算 logit_chunkの形状を確認した方がいいかも
 
             wm_mean = wm_content_vec2.mean(dim=2)            # (B, D)
