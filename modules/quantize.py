@@ -689,6 +689,9 @@ class FAquantizer(nn.Module):
         z_c, codes_c, latents_c, commitment_loss_c, codebook_loss_c, out_quantized = self.content_quantizer(
             x, n_c
         )
+
+
+        """抽出器version2のアプローチ
         residual_feature = x - z_p.detach() - z_c.detach()
 
         z_r, codes_r, latents_r, commitment_loss_r, codebook_loss_r, _ = self.residual_quantizer(
@@ -720,7 +723,9 @@ class FAquantizer(nn.Module):
         gamma, beta = style.chunk(2, 1)   # (B, d, 1) -> gannma shape (B, 1024, 1), beta shape (B, 1024, 1)
         x_no_timbre = (x - beta) / (gamma + 1e-8)
         x_contentvec2 = x_no_timbre - z_p.detach() - out_quantized[0].detach() - z_r * res_mask       # x shape (B, 1024, T)
+        """
         # この後にself attention
+        x_contentvec2 = z_c
         logit_vad, logit_chunk = self.wm_detector(x_contentvec2)
 
         return logit_vad, logit_chunk
