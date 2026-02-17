@@ -75,3 +75,76 @@ def partial_watermarking_filtering(original_wav: torch.Tensor, watermarked_wav: 
     vad_labels[:, :replace_mask.size(1)] = vad_labels[:, :replace_mask.size(1)] * replace_mask
 
     return watermarked_wav, vad_labels
+
+
+import torch
+import torch.nn as nn
+import torchaudio
+import numpy as np
+
+class PseudoVCInjector(nn.Module):
+    def __init__(self, sample_rate=24000, n_mels=80, n_fft=1024, hop_length=256, attack_prob=0.5):
+        super().__init__()
+        self.sample_rate = sample_rate
+        self.attack_prob = attack_prob
+        
+        # 1. Mel-Resynthesis用 (微分可能なVocoder劣化の近似)
+        self.mel_transform = torchaudio.transforms.MelSpectrogram(
+            sample_rate=sample_rate, n_fft=n_fft, hop_length=hop_length, 
+            n_mels=n_mels, normalized=True
+        )
+        self.griffin_lim = torchaudio.transforms.GriffinLim(
+            n_fft=n_fft, hop_length=hop_length, n_iter=16 # 軽めに設定
+        )
+        
+        # 2. リサンプリング用
+        self.resample_down = torchaudio.transforms.Resample(sample_rate, 16000)
+        self.resample_up = torchaudio.transforms.Resample(16000, sample_rate)
+
+    def forward(self, waveform):
+        """
+        waveform: (B, 1, T) or (B, T)
+        """
+        # 確率で攻撃をスキップ
+        if np.random.rand() > self.attack_prob:
+            return waveform
+
+        # 攻撃の種類をランダム選択
+        attack_type = np.random.choice(['noise', 'resample', 'mel_resynth'], p=[0.4, 0.3, 0.3])
+        
+        attacked_wav = waveform.clone()
+
+        if attack_type == 'noise':
+            # 量子化ノイズのシミュレーション (SNR 20dB-40dB程度)
+            noise_level = torch.rand(1).item() * 0.02 + 0.001
+            noise = torch.randn_like(attacked_wav) * noise_level
+            attacked_wav = attacked_wav + noise
+
+        elif attack_type == 'resample':
+            # 帯域制限攻撃
+            attacked_wav = self.resample_up(self.resample_down(attacked_wav))
+            # 長さが微妙に変わる場合があるので合わせる
+            if attacked_wav.shape[-1] != waveform.shape[-1]:
+                min_len = min(attacked_wav.shape[-1], waveform.shape[-1])
+                attacked_wav = attacked_wav[..., :min_len]
+                waveform = waveform[..., :min_len] # 元波形も合わせておく(Loss計算用)
+
+        elif attack_type == 'mel_resynth':
+            # メルスペクトログラム経由での再合成 (Vocoder劣化)
+            # ※ GriffinLimへの勾配伝播は不安定な場合があるので、ここだけ no_grad にするか、
+            # 構造的劣化として割り切るのが一般的です。今回は学習させるため勾配を通してみます。
+            mels = self.mel_transform(attacked_wav)
+            attacked_wav = self.griffin_lim(mels)
+            
+            # 長さ合わせ
+            if attacked_wav.shape[-1] != waveform.shape[-1]:
+                min_len = min(attacked_wav.shape[-1], waveform.shape[-1])
+                attacked_wav = attacked_wav[..., :min_len]
+                # waveformは呼び出し元で調整が必要になるため、ここではattacked_wavをpadding/cropして戻すのが安全
+                if attacked_wav.shape[-1] < waveform.shape[-1]:
+                    pad = waveform.shape[-1] - attacked_wav.shape[-1]
+                    attacked_wav = torch.nn.functional.pad(attacked_wav, (0, pad))
+                else:
+                    attacked_wav = attacked_wav[..., :waveform.shape[-1]]
+
+        return attacked_wav

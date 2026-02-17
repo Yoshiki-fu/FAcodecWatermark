@@ -256,6 +256,36 @@ class ResidualVectorQuantize(nn.Module):
             z_q = z_q + z_q_i
 
         return z_q, torch.cat(z_p, dim=1), torch.stack(codes, dim=1)
+    
+    def get_pre_vq_continuous_feature(self, z: torch.Tensor, layer_idx: int = 0) -> torch.Tensor:
+        """
+        指定した量子化層の、in_proj（射影層）を通過した直後の連続値特徴量を取得します。
+        
+        Parameters
+        ----------
+        z : Tensor[B x D x T]
+            RVQモジュールへの入力テンソル（広い潜在特徴量）
+        layer_idx : int, optional
+            取得したい量子化層のインデックス。デフォルトは 0 (1本目のベクトル用)。
+
+        Returns
+        -------
+        Tensor[B x codebook_dim x T]
+            量子化される直前の、低次元（または同次元）に射影された連続値特徴量 (z_e)
+        """
+        if layer_idx >= len(self.quantizers):
+            raise ValueError(f"layer_idx {layer_idx} is out of bounds for {len(self.quantizers)} quantizers.")
+        
+        # 指定された層（通常は0番目）の in_proj を使って射影する
+        # ※ self.quantizers[layer_idx] は VectorQuantize クラスのインスタンス
+        # 1. 1024 -> 8 に圧縮（ここで声質などの不要情報が削ぎ落とされる）
+        z_e = self.quantizers[layer_idx].in_proj(z)
+        
+        # 2. 8 -> 1024 に復元（量子化はスキップし、連続値のまま広げる）
+        z_filtered = self.quantizers[layer_idx].out_proj(z_e)
+        
+        return z_filtered
+
 
 
 if __name__ == "__main__":
